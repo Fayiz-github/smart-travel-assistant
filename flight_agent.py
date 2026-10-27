@@ -1,6 +1,10 @@
 import os
+from datetime import datetime, timedelta
 import serpapi
 from dotenv import load_dotenv
+
+# --- CONFIGURATION ---
+SIGNIFICANT_SAVINGS_RATIO = 0.85  # Alert if adjacent day is >= 15% cheaper
 
 load_dotenv()
 
@@ -103,6 +107,24 @@ def run_flight_agent(dep_id: str, arr_id: str, target_date: str, currency: str =
     if not main_flights:
         print("No flights found for the selected date.")
         return
+
+    # Check adjacent dates (+/- 1 day) for cheaper fares
+    date_obj  = datetime.strptime(target_date, "%Y-%m-%d")
+    prev_date = (date_obj - timedelta(days=1)).strftime("%Y-%m-%d")
+    next_date = (date_obj + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    min_main_price = min(f["price"] for f in main_flights)
+
+    for adj_label, adj_date in [("day before", prev_date), ("day after", next_date)]:
+        adj_flights = fetch_flights(dep_id, arr_id, adj_date, currency)
+        if adj_flights:
+            min_adj_price = min(f["price"] for f in adj_flights)
+            if min_adj_price <= min_main_price * SIGNIFICANT_SAVINGS_RATIO:
+                savings = min_main_price - min_adj_price
+                print(
+                    f"💡 FLEXIBLE DATE TIP: Leaving the {adj_label} ({adj_date}) starts at "
+                    f"{currency} {min_adj_price:,} (Save {currency} {savings:,} vs {target_date})!\n"
+                )
 
     price_tiers = group_into_tiers(main_flights)
 
