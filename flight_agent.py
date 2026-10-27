@@ -73,11 +73,60 @@ def group_into_tiers(flights: list[dict]) -> dict[str, list[dict]]:
     return tiers
 
 
+def format_flight_summary(itinerary: dict, currency: str = "INR") -> str:
+    """Formats a single flight itinerary for display."""
+    price          = itinerary.get("price", "N/A")
+    total_duration = itinerary.get("total_duration", 0)
+    hours, mins    = divmod(total_duration, 60)
+
+    connecting_flights = itinerary.get("flights", [])
+    if not connecting_flights:
+        return f"Price: {currency} {price}"
+
+    first_flight = connecting_flights[0]
+    last_flight  = connecting_flights[-1]
+
+    airlines = ", ".join(sorted(set(flight.get("airline", "") for flight in connecting_flights)))
+    dep_time = first_flight.get("departure_airport", {}).get("time", "N/A")
+    arr_time = last_flight.get("arrival_airport", {}).get("time", "N/A")
+
+    return (
+        f"• {airlines} | {currency} {price:,} | Total Time: {hours}h {mins}m\n"
+        f"  Departs: {dep_time} -> Arrives: {arr_time}"
+    )
+
+
+def run_flight_agent(dep_id: str, arr_id: str, target_date: str, currency: str = "INR"):
+    print(f"🔎 Searching flights from {dep_id} to {arr_id} on {target_date}...\n")
+
+    main_flights = fetch_flights(dep_id, arr_id, target_date, currency)
+    if not main_flights:
+        print("No flights found for the selected date.")
+        return
+
+    price_tiers = group_into_tiers(main_flights)
+
+    for tier_name, flight_list in price_tiers.items():
+        total_in_tier = len(flight_list)
+        shown_count   = min(3, total_in_tier)
+
+        print(f"=== {tier_name.upper()} (Showing {shown_count} of {total_in_tier} options) ===")
+        if not flight_list:
+            print("  No flights in this price range.\n")
+            continue
+
+        for itinerary in flight_list[:3]:
+            print(format_flight_summary(itinerary, currency))
+            print("-" * 50)
+        print()
+
+
 if __name__ == "__main__":
-    flights = fetch_flights("MYQ", "MAA", "2026-10-29", "INR")
-    tiers = group_into_tiers(flights)
-    for tier, items in tiers.items():
-        print(f"\n{tier}: {len(items)} flights")
-        for f in items:
-            print(f"  Price: INR {f.get('price'):,}")
+    run_flight_agent(
+        dep_id="MYQ",
+        arr_id="MAA",
+        target_date="2026-10-29",
+        currency="INR"
+    )
+
 
