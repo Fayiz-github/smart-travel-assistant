@@ -4,7 +4,9 @@ import serpapi
 from dotenv import load_dotenv
 
 # --- CONFIGURATION ---
-SIGNIFICANT_SAVINGS_RATIO = 0.85  # Alert if adjacent day is >= 15% cheaper
+MIN_SAFE_LAYOVER_MINS    = 60       # Warn if connection is under 1 hour
+MAX_COMFORT_LAYOVER_MINS = 360      # Warn if connection is over 6 hours
+SIGNIFICANT_SAVINGS_RATIO = 0.85   # Alert if adjacent day is >= 15% cheaper
 
 load_dotenv()
 
@@ -14,6 +16,38 @@ if not secret_api_key:
     exit()
 
 client = serpapi.Client(api_key=secret_api_key)
+
+
+def evaluate_layovers(itinerary: dict) -> list[str]:
+    """Checks an itinerary for short or long connection times."""
+    warnings = []
+    layovers = itinerary.get("layovers", [])
+
+    if not layovers:
+        return ["Direct flight (No layovers)"]
+
+    for layover in layovers:
+        duration     = layover.get("duration", 0)
+        airport_name = layover.get("name", "Unknown Airport")
+        airport_code = layover.get("id", "")
+
+        hours, mins = divmod(duration, 60)
+        time_str = f"{hours}h {mins}m" if hours else f"{mins}m"
+
+        if duration < MIN_SAFE_LAYOVER_MINS:
+            warnings.append(
+                f"⚠️ TIGHT CONNECTION at {airport_name} ({airport_code}): Only {time_str} to change planes."
+            )
+        elif duration > MAX_COMFORT_LAYOVER_MINS:
+            warnings.append(
+                f"⏳ LONG LAYOVER at {airport_name} ({airport_code}): {time_str} wait."
+            )
+        else:
+            warnings.append(
+                f"✅ Comfortable layover at {airport_name} ({airport_code}): {time_str}."
+            )
+
+    return warnings
 
 
 def fetch_flights(dep_id: str, arr_id: str, date_str: str, currency: str = "INR"):
@@ -94,9 +128,13 @@ def format_flight_summary(itinerary: dict, currency: str = "INR") -> str:
     dep_time = first_flight.get("departure_airport", {}).get("time", "N/A")
     arr_time = last_flight.get("arrival_airport", {}).get("time", "N/A")
 
+    layover_notes = evaluate_layovers(itinerary)
+    notes_str = "\n      ".join(layover_notes)
+
     return (
         f"• {airlines} | {currency} {price:,} | Total Time: {hours}h {mins}m\n"
-        f"  Departs: {dep_time} -> Arrives: {arr_time}"
+        f"  Departs: {dep_time} -> Arrives: {arr_time}\n"
+        f"  Layover Notes:\n      {notes_str}"
     )
 
 
