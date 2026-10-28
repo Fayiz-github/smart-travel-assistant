@@ -8,6 +8,15 @@ MIN_SAFE_LAYOVER_MINS    = 60       # Warn if connection is under 1 hour
 MAX_COMFORT_LAYOVER_MINS = 360      # Warn if connection is over 6 hours
 SIGNIFICANT_SAVINGS_RATIO = 0.85   # Alert if adjacent day is >= 15% cheaper
 
+# Map airport codes to countries that commonly require transit visas or have strict rules
+TRANSIT_VISA_COUNTRIES = {
+    "DXB": "UAE (Dubai)", "AUH": "UAE (Abu Dhabi)",
+    "LHR": "United Kingdom", "LGW": "United Kingdom",
+    "JFK": "United States", "EWR": "United States", "SFO": "United States",
+    "YYZ": "Canada", "YVR": "Canada",
+    "SYD": "Australia", "MEL": "Australia"
+}
+
 load_dotenv()
 
 secret_api_key = os.getenv("SECRET_API_KEY")
@@ -45,6 +54,17 @@ def evaluate_layovers(itinerary: dict) -> list[str]:
         else:
             warnings.append(
                 f"✅ Comfortable layover at {airport_name} ({airport_code}): {time_str}."
+            )
+
+        # Check if SerpApi flagged an overnight layover
+        if layover.get("overnight"):
+            warnings.append(f"🌙 OVERNIGHT layover at {airport_code}.")
+
+        # Check for potential transit visa requirements
+        if airport_code in TRANSIT_VISA_COUNTRIES:
+            country = TRANSIT_VISA_COUNTRIES[airport_code]
+            warnings.append(
+                f"🛂 VISA CHECK: Layover in {country} ({airport_code}) — verify if a transit visa is required."
             )
 
     return warnings
