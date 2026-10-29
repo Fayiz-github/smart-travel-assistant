@@ -11,6 +11,53 @@ if not secret_api_key:
 
 client = serpapi.Client(api_key=secret_api_key)
 
+# --- CONFIGURATION ---
+MIN_SAFE_RATING      = 3.5   # Warn if guest rating is below 3.5 / 5.0
+HIGH_RATING_THRESHOLD = 4.3  # Highlight if guest rating is 4.3 or higher
+
+# Important amenities to look out for in the hotel data
+KEY_AMENITIES = ["Free Wi-Fi", "Free breakfast", "Free parking", "Pool", "Air conditioning", "Room Service", "Fitness center"]
+
+
+def evaluate_hotel_details(hotel: dict) -> list[str]:
+    """Checks a hotel for low ratings, deals, key amenities, and check-in/out times."""
+    notes = []
+
+    # 1. Check Guest Rating & Reviews
+    rating  = hotel.get("overall_rating")
+    reviews = hotel.get("reviews", 0)
+
+    if rating is None:
+        notes.append("⚠️ UNRATED PROPERTY: No guest rating available yet — book with caution.")
+    elif rating < MIN_SAFE_RATING:
+        notes.append(f"⚠️ LOW GUEST RATING: {rating}/5 ({reviews:,} reviews) — check recent guest complaints.")
+    elif rating >= HIGH_RATING_THRESHOLD:
+        notes.append(f"⭐ TOP-RATED STAY: {rating}/5 ({reviews:,} reviews).")
+    else:
+        notes.append(f"✅ Decent Rating: {rating}/5 ({reviews:,} reviews).")
+
+    # 2. Check for Special Deals
+    deal = hotel.get("deal")
+    if deal:
+        notes.append(f"🏷️ SPECIAL DEAL: {deal}")
+
+    # 3. Check Key Amenities
+    amenities     = hotel.get("amenities", [])
+    matched_perks = [perk for perk in KEY_AMENITIES if perk in amenities]
+    if matched_perks:
+        notes.append(f"🛎️ Perks Included: {', '.join(matched_perks)}")
+    else:
+        notes.append("ℹ️ No free breakfast or major perks listed.")
+
+    # 4. Check-in / Check-out timings
+    check_in_time  = hotel.get("check_in_time")
+    check_out_time = hotel.get("check_out_time")
+    if check_in_time or check_out_time:
+        notes.append(f"🕒 Timings: Check-in {check_in_time or 'N/A'} | Check-out {check_out_time or 'N/A'}")
+
+    return notes
+
+
 
 def extract_nightly_price(property_item: dict) -> float | None:
     """Safely extracts the numerical nightly price from a SerpApi hotel property."""
