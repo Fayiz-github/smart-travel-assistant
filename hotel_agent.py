@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timedelta
 import serpapi
 from dotenv import load_dotenv
 
@@ -12,8 +13,9 @@ if not secret_api_key:
 client = serpapi.Client(api_key=secret_api_key)
 
 # --- CONFIGURATION ---
-MIN_SAFE_RATING      = 3.5   # Warn if guest rating is below 3.5 / 5.0
-HIGH_RATING_THRESHOLD = 4.3  # Highlight if guest rating is 4.3 or higher
+MIN_SAFE_RATING       = 3.5    # Warn if guest rating is below 3.5 / 5.0
+HIGH_RATING_THRESHOLD = 4.3   # Highlight if guest rating is 4.3 or higher
+SIGNIFICANT_SAVINGS_RATIO = 0.85  # Alert if shifting dates is >= 15% cheaper
 
 # Important amenities to look out for in the hotel data
 KEY_AMENITIES = ["Free Wi-Fi", "Free breakfast", "Free parking", "Pool", "Air conditioning", "Room Service", "Fitness center"]
@@ -178,6 +180,33 @@ def run_hotel_agent(
     if not main_hotels:
         print("No hotels found for the selected dates.")
         return
+
+    # Check adjacent dates (+/- 1 day shift) for cheaper nightly rates
+    in_date_obj  = datetime.strptime(check_in_date,  "%Y-%m-%d")
+    out_date_obj = datetime.strptime(check_out_date, "%Y-%m-%d")
+
+    adjacent_shifts = [
+        ("1 day earlier",
+         (in_date_obj  - timedelta(days=1)).strftime("%Y-%m-%d"),
+         (out_date_obj - timedelta(days=1)).strftime("%Y-%m-%d")),
+        ("1 day later",
+         (in_date_obj  + timedelta(days=1)).strftime("%Y-%m-%d"),
+         (out_date_obj + timedelta(days=1)).strftime("%Y-%m-%d"))
+    ]
+
+    min_main_price = min(h["price"] for h in main_hotels)
+
+    for shift_label, adj_in, adj_out in adjacent_shifts:
+        adj_hotels = fetch_hotels(location_query, adj_in, adj_out, adults, currency)
+        if adj_hotels:
+            min_adj_price = min(h["price"] for h in adj_hotels)
+            if min_adj_price <= min_main_price * SIGNIFICANT_SAVINGS_RATIO:
+                savings = min_main_price - min_adj_price
+                print(
+                    f"💡 FLEXIBLE DATE TIP: Shifting your stay {shift_label} ({adj_in} to {adj_out}) "
+                    f"starts at {currency} {min_adj_price:,}/night "
+                    f"(Save {currency} {savings:,}/night vs your chosen dates)!\n"
+                )
 
     price_tiers = group_into_tiers(main_hotels)
 
