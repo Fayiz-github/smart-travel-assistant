@@ -111,7 +111,97 @@ def fetch_hotels(
     return valid_hotels
 
 
+def group_into_tiers(hotels: list[dict]) -> dict[str, list[dict]]:
+    """
+    Groups hotels into price tiers relative to the lowest nightly price:
+    - Cheap Tier:   Up to 20% more than the lowest price
+    - Budget Tier:  More than 20% up to 40% higher than the lowest price
+    - Premium Tier: More than 40% higher than the lowest price
+    """
+    if not hotels:
+        return {}
+
+    sorted_hotels = sorted(hotels, key=lambda x: x["price"])
+
+    if len(sorted_hotels) <= 2:
+        return {"Available Hotels": sorted_hotels}
+
+    min_price = sorted_hotels[0]["price"]
+    max_price = sorted_hotels[-1]["price"]
+
+    if min_price == max_price:
+        return {"Available Hotels": sorted_hotels}
+
+    cheap_cutoff  = min_price * 1.20
+    budget_cutoff = min_price * 1.40
+
+    tiers = {"Cheap Tier": [], "Budget Tier": [], "Premium Tier": []}
+    for h in sorted_hotels:
+        price = h["price"]
+        if price <= cheap_cutoff:
+            tiers["Cheap Tier"].append(h)
+        elif price <= budget_cutoff:
+            tiers["Budget Tier"].append(h)
+        else:
+            tiers["Premium Tier"].append(h)
+
+    return tiers
+
+
+def format_hotel_summary(hotel: dict, currency: str = "INR") -> str:
+    """Formats a single hotel property for display."""
+    name          = hotel.get("name", "Unknown Hotel")
+    price         = hotel.get("price", "N/A")
+    hotel_class   = hotel.get("hotel_class", "Unclassified")
+    property_type = hotel.get("type", "hotel").title()
+    total_rate_str = hotel.get("total_rate", {}).get("lowest", "N/A")
+
+    hotel_notes = evaluate_hotel_details(hotel)
+    notes_str   = "\n      ".join(hotel_notes)
+
+    return (
+        f"• {name} ({hotel_class} {property_type}) | {currency} {price:,}/night (Total: {total_rate_str})\n"
+        f"  Hotel Notes:\n      {notes_str}"
+    )
+
+
+def run_hotel_agent(
+    location_query: str,
+    check_in_date: str,
+    check_out_date: str,
+    adults: int = 2,
+    currency: str = "INR"
+):
+    print(f"🏨 Searching hotels in '{location_query}' ({check_in_date} to {check_out_date}) for {adults} adults...\n")
+
+    main_hotels = fetch_hotels(location_query, check_in_date, check_out_date, adults, currency)
+    if not main_hotels:
+        print("No hotels found for the selected dates.")
+        return
+
+    price_tiers = group_into_tiers(main_hotels)
+
+    for tier_name, hotel_list in price_tiers.items():
+        total_in_tier = len(hotel_list)
+        shown_count   = min(3, total_in_tier)
+
+        print(f"=== {tier_name.upper()} (Showing {shown_count} of {total_in_tier} options) ===")
+        if not hotel_list:
+            print("  No hotels in this price range.\n")
+            continue
+
+        for hotel in hotel_list[:3]:
+            print(format_hotel_summary(hotel, currency))
+            print("-" * 55)
+        print()
+
+
 if __name__ == "__main__":
-    hotels = fetch_hotels("Bengaluru", "2026-11-15", "2026-11-17", 2, "INR")
-    for h in hotels:
-        print(f"{h.get('name')} | INR {h.get('price'):,}/night")
+    run_hotel_agent(
+        location_query="Bengaluru",
+        check_in_date="2026-11-15",
+        check_out_date="2026-11-17",
+        adults=2,
+        currency="INR"
+    )
+
