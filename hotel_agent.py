@@ -143,7 +143,16 @@ def filter_by_star_rating(
     filtered = []
     for hotel in hotels:
         star_class = hotel.get("extracted_hotel_class")
-        if not star_class:
+
+        # Normalize to int — SerpApi may return a string like "4" or an int
+        if star_class is not None:
+            try:
+                star_class = int(star_class)
+            except (ValueError, TypeError):
+                star_class = None
+
+        # Fallback: parse star digit from hotel_class string e.g. "4-star hotel"
+        if star_class is None:
             hc_str = str(hotel.get("hotel_class", ""))
             match = re.search(r'(\d)', hc_str)
             if match:
@@ -151,6 +160,7 @@ def filter_by_star_rating(
 
         if star_class in target_stars:
             filtered.append(hotel)
+
 
     if not filtered:
         if allow_fallback:
