@@ -336,6 +336,11 @@ def run_hotel_agent(
     if food_preference:
         main_hotels, food_matched = filter_by_food_preference(main_hotels, food_preference, allow_fallback=True)
 
+    # 🛑 CRITICAL SAFETY CHECK: Stop if filters wiped out all results
+    if not main_hotels:
+        print("❌ No hotels match your combined star rating and food preference filters for these dates.")
+        return
+
     # Check adjacent dates (+/- 1 day shift) for cheaper nightly rates
     adjacent_shifts = [
         ("1 day earlier",
