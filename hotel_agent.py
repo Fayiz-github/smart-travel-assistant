@@ -161,6 +161,64 @@ def filter_by_star_rating(
     return filtered, True
 
 
+def filter_by_food_preference(
+    hotels: list[dict],
+    preference: str,
+    allow_fallback: bool = True
+) -> tuple[list[dict], bool]:
+    """
+    Scans hotel descriptions, names, and amenities to filter and
+    tag properties according to dietary preferences (veg, non-veg, halal).
+    Returns (filtered_hotels, matched_flag).
+    """
+    if not preference or not hotels:
+        return hotels, False
+
+    pref_lower = preference.lower().strip()
+    filtered   = []
+
+    for hotel in hotels:
+        amenities     = [a.lower() for a in hotel.get("amenities", [])]
+        description   = hotel.get("description", "").lower()
+        property_name = hotel.get("name", "").lower()
+        full_text     = " ".join(amenities) + " " + description + " " + property_name
+
+        # Check 'non-veg' BEFORE 'veg' so "non-veg" does not trigger the "veg" substring check
+        if "non" in pref_lower:
+            if any("restaurant" in a for a in amenities) or "dining" in full_text or "breakfast" in full_text:
+                hotel["food_match_note"] = "🍗 Non-vegetarian / Multi-cuisine restaurant on-site."
+                filtered.append(hotel)
+
+        elif "veg" in pref_lower:
+            if "vegetarian" in full_text or "pure veg" in full_text or "veg options" in full_text:
+                hotel["food_match_note"] = "🌱 Vegetarian-friendly options indicated."
+                filtered.append(hotel)
+            elif any("restaurant" in a for a in amenities) or "breakfast" in full_text:
+                hotel["food_match_note"] = "🍽️ Has on-site dining/breakfast."
+                filtered.append(hotel)
+
+        elif "halal" in pref_lower:
+            if "halal" in full_text:
+                hotel["food_match_note"] = "☪️ Halal food options/certification mentioned."
+                filtered.append(hotel)
+            elif any("restaurant" in a for a in amenities):
+                hotel["food_match_note"] = "ℹ️ Has restaurant (Verify halal availability with property)."
+                filtered.append(hotel)
+
+        else:
+            if pref_lower in full_text:
+                hotel["food_match_note"] = f"🍽️ Matches '{preference}' preference."
+                filtered.append(hotel)
+
+    if not filtered:
+        if allow_fallback:
+            print(f"⚠️ No hotels explicitly matched '{preference}'. Showing all available options.\n")
+            return hotels, False
+        return [], False
+
+    return filtered, True
+
+
 def group_into_tiers(hotels: list[dict]) -> dict[str, list[dict]]:
     """
     Groups hotels into price tiers relative to the lowest nightly price:
