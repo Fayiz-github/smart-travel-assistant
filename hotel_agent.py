@@ -1,8 +1,13 @@
 import os
+import sys
 import re
 from datetime import datetime, timedelta
 import serpapi
 from dotenv import load_dotenv
+
+# Ensure UTF-8 output encoding on Windows consoles for emoji and currency symbols
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 load_dotenv()
 
@@ -285,7 +290,8 @@ def group_into_tiers(hotels: list[dict]) -> dict[str, list[dict]]:
 def format_hotel_summary(hotel: dict, currency: str = "INR") -> str:
     """Formats a single hotel property for display."""
     name          = hotel.get("name", "Unknown Hotel")
-    price         = hotel.get("price", "N/A")
+    price         = hotel.get("price")
+    price_str     = f"{price:,.0f}" if isinstance(price, (int, float)) else "N/A"
     hotel_class   = hotel.get("hotel_class", "Unclassified")
     property_type = hotel.get("type", "hotel").title()
     total_rate_str = hotel.get("total_rate", {}).get("lowest", "N/A")
@@ -294,7 +300,7 @@ def format_hotel_summary(hotel: dict, currency: str = "INR") -> str:
     notes_str   = "\n      ".join(hotel_notes) if hotel_notes else "No additional notes."
 
     return (
-        f"• {name} ({hotel_class} {property_type}) | {currency} {price:,}/night (Total: {total_rate_str})\n"
+        f"• {name} ({hotel_class} {property_type}) | {currency} {price_str}/night (Total: {total_rate_str})\n"
         f"  Hotel Notes:\n      {notes_str}"
     )
 
@@ -368,8 +374,8 @@ def run_hotel_agent(
                 savings = min_main_price - min_adj_price
                 print(
                     f"💡 FLEXIBLE DATE TIP: Shifting your stay {shift_label} ({adj_in} to {adj_out}) "
-                    f"starts at {currency} {min_adj_price:,}/night "
-                    f"(Save {currency} {savings:,}/night vs your chosen dates)!\n"
+                    f"starts at {currency} {min_adj_price:,.0f}/night "
+                    f"(Save {currency} {savings:,.0f}/night vs your chosen dates)!\n"
                 )
 
     price_tiers = group_into_tiers(main_hotels)
