@@ -294,14 +294,31 @@ def run_hotel_agent(
     check_in_date: str,
     check_out_date: str,
     adults: int = 2,
-    currency: str = "INR"
+    currency: str = "INR",
+    star_rating: int | list[int] = None,
+    food_preference: str = None
 ):
-    print(f"🏨 Searching hotels in '{location_query}' ({check_in_date} to {check_out_date}) for {adults} adults...\n")
+    print(
+        f"🏨 Searching hotels in '{location_query}' "
+        f"({check_in_date} to {check_out_date}) for {adults} adults"
+        f"{f' [Stars: {star_rating}]' if star_rating else ''}"
+        f"{f' [Food: {food_preference}]' if food_preference else ''}...\n"
+    )
 
     main_hotels = fetch_hotels(location_query, check_in_date, check_out_date, adults, currency)
     if not main_hotels:
         print("No hotels found for the selected dates.")
         return
+
+    # Apply star rating and food preference filters (tracking which filters matched)
+    star_matched = False
+    food_matched = False
+
+    if star_rating:
+        main_hotels, star_matched = filter_by_star_rating(main_hotels, star_rating, allow_fallback=True)
+
+    if food_preference:
+        main_hotels, food_matched = filter_by_food_preference(main_hotels, food_preference, allow_fallback=True)
 
     # Check adjacent dates (+/- 1 day shift) for cheaper nightly rates
     in_date_obj  = datetime.strptime(check_in_date,  "%Y-%m-%d")
@@ -320,6 +337,13 @@ def run_hotel_agent(
 
     for shift_label, adj_in, adj_out in adjacent_shifts:
         adj_hotels = fetch_hotels(location_query, adj_in, adj_out, adults, currency)
+
+        # Apply strict filtering ONLY for filters that actually matched on the main date
+        if star_matched:
+            adj_hotels, _ = filter_by_star_rating(adj_hotels, star_rating, allow_fallback=False)
+        if food_matched:
+            adj_hotels, _ = filter_by_food_preference(adj_hotels, food_preference, allow_fallback=False)
+
         if adj_hotels:
             min_adj_price = min(h["price"] for h in adj_hotels)
             if min_adj_price <= min_main_price * SIGNIFICANT_SAVINGS_RATIO:
@@ -353,6 +377,7 @@ if __name__ == "__main__":
         check_in_date="2026-11-15",
         check_out_date="2026-11-17",
         adults=2,
-        currency="INR"
+        currency="INR",
+        star_rating=[4, 5],
+        food_preference="veg"
     )
-
