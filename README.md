@@ -15,12 +15,15 @@ An AI-powered travel assistant for searching flights and hotels using Google Fli
 
 ### 🏨 Hotel Search
 - Fetches live hotels via SerpApi Google Hotels
-- Groups results into **Cheap / Budget / Premium** price tiers
+- Groups results into **Cheap / Budget / Premium** tiers (median-anchored pricing)
 - 💡 Suggests cheaper rates by shifting stay ±1 day
 - ⭐ Highlights top-rated properties (≥ 4.3 / 5.0)
 - ⚠️ Flags low-rated or unrated properties
 - 🛎️ Lists included perks (Wi-Fi, breakfast, pool, parking, etc.)
 - 🕒 Shows check-in / check-out times
+- ⭐ Filter by star rating (e.g. 4-star and 5-star only)
+- 🍽️ Filter by food preference (veg, non-veg, halal)
+- 🛡️ Date validation to prevent invalid search ranges
 
 ## Setup
 
@@ -59,3 +62,17 @@ You can tune thresholds at the top of each file:
 | `SIGNIFICANT_SAVINGS_RATIO` | 0.85 | Threshold to flag adjacent date savings (15%+) |
 | `MIN_SAFE_RATING` | 3.5 | Minimum acceptable hotel rating |
 | `HIGH_RATING_THRESHOLD` | 4.3 | Rating to flag a hotel as top-rated |
+
+## Hotel Search Options
+
+```python
+run_hotel_agent(
+    location_query="Bengaluru",
+    check_in_date="2026-11-15",
+    check_out_date="2026-11-17",
+    adults=2,
+    currency="INR",
+    star_rating=[4, 5],       # Optional: filter by star class
+    food_preference="veg"     # Optional: veg / non-veg / halal
+)
+```
