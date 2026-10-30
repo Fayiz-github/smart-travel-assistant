@@ -291,7 +291,7 @@ def format_hotel_summary(hotel: dict, currency: str = "INR") -> str:
     total_rate_str = hotel.get("total_rate", {}).get("lowest", "N/A")
 
     hotel_notes = evaluate_hotel_details(hotel)
-    notes_str   = "\n      ".join(hotel_notes)
+    notes_str   = "\n      ".join(hotel_notes) if hotel_notes else "No additional notes."
 
     return (
         f"• {name} ({hotel_class} {property_type}) | {currency} {price:,}/night (Total: {total_rate_str})\n"
