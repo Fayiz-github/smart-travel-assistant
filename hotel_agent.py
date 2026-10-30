@@ -298,6 +298,12 @@ def run_hotel_agent(
     star_rating: int | list[int] = None,
     food_preference: str = None
 ):
+    in_date_obj  = datetime.strptime(check_in_date,  "%Y-%m-%d")
+    out_date_obj = datetime.strptime(check_out_date, "%Y-%m-%d")
+    if out_date_obj <= in_date_obj:
+        print("Error: check_out_date must be after check_in_date.")
+        return
+
     print(
         f"🏨 Searching hotels in '{location_query}' "
         f"({check_in_date} to {check_out_date}) for {adults} adults"
@@ -321,9 +327,6 @@ def run_hotel_agent(
         main_hotels, food_matched = filter_by_food_preference(main_hotels, food_preference, allow_fallback=True)
 
     # Check adjacent dates (+/- 1 day shift) for cheaper nightly rates
-    in_date_obj  = datetime.strptime(check_in_date,  "%Y-%m-%d")
-    out_date_obj = datetime.strptime(check_out_date, "%Y-%m-%d")
-
     adjacent_shifts = [
         ("1 day earlier",
          (in_date_obj  - timedelta(days=1)).strftime("%Y-%m-%d"),
