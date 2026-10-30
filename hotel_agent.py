@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime, timedelta
 import serpapi
 from dotenv import load_dotenv
@@ -116,6 +117,48 @@ def fetch_hotels(
             valid_hotels.append(prop)
 
     return valid_hotels
+
+
+def filter_by_star_rating(
+    hotels: list[dict],
+    target_stars: int | list[int],
+    allow_fallback: bool = True
+) -> tuple[list[dict], bool]:
+    """
+    Filters the hotel list to match specific star classifications.
+    Returns (filtered_hotels, matched_flag).
+    """
+    if not target_stars or not hotels:
+        return hotels, False
+
+    if isinstance(target_stars, int):
+        target_stars = [target_stars]
+    elif isinstance(target_stars, str):
+        digits = [int(d) for d in re.findall(r'\d+', target_stars)]
+        target_stars = digits if digits else []
+
+    if not target_stars:
+        return hotels, False
+
+    filtered = []
+    for hotel in hotels:
+        star_class = hotel.get("extracted_hotel_class")
+        if not star_class:
+            hc_str = str(hotel.get("hotel_class", ""))
+            match = re.search(r'(\d)', hc_str)
+            if match:
+                star_class = int(match.group(1))
+
+        if star_class in target_stars:
+            filtered.append(hotel)
+
+    if not filtered:
+        if allow_fallback:
+            print(f"⚠️ No hotels found matching star rating {target_stars}. Showing all available options instead.\n")
+            return hotels, False
+        return [], False
+
+    return filtered, True
 
 
 def group_into_tiers(hotels: list[dict]) -> dict[str, list[dict]]:
