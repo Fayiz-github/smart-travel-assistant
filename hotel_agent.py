@@ -61,20 +61,21 @@ def evaluate_hotel_details(hotel: dict) -> list[str]:
 
 
 
-def extract_nightly_price(property_item: dict) -> float | None:
-    """Safely extracts the numerical nightly price from a SerpApi hotel property."""
+def extract_nightly_price(property_item: dict, num_nights: int = 1) -> float | None:
+    """
+    Extracts a positive numerical nightly rate from a hotel property dictionary.
+    Falls back to dividing the total rate by the number of nights if rate_per_night is missing.
+    """
     rate_info = property_item.get("rate_per_night", {})
-
-    # SerpApi provides 'extracted_lowest' as a clean number (int or float)
     price = rate_info.get("extracted_lowest")
-    if isinstance(price, (int, float)):
-        return price
+    if isinstance(price, (int, float)) and price > 0:
+        return float(price)
 
-    # Fallback to total_rate if rate_per_night is missing
+    # Fallback: divide total rate by number of nights
     total_info  = property_item.get("total_rate", {})
     total_price = total_info.get("extracted_lowest")
-    if isinstance(total_price, (int, float)):
-        return total_price
+    if isinstance(total_price, (int, float)) and total_price > 0:
+        return round(float(total_price) / max(1, num_nights), 2)
 
     return None
 
@@ -101,13 +102,17 @@ def fetch_hotels(
         print(f"API Error for {check_in_date}: {results['error']}")
         return []
 
+    in_date    = datetime.strptime(check_in_date,  "%Y-%m-%d")
+    out_date   = datetime.strptime(check_out_date, "%Y-%m-%d")
+    num_nights = max(1, (out_date - in_date).days)
+
     raw_properties = results.get("properties", [])
     valid_hotels   = []
 
     for prop in raw_properties:
-        price = extract_nightly_price(prop)
+        price = extract_nightly_price(prop, num_nights)
         if price is not None:
-            prop["price"] = price  # Store clean price at top level
+            prop["price"] = price
             valid_hotels.append(prop)
 
     return valid_hotels
