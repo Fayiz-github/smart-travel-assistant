@@ -214,56 +214,36 @@ def filter_by_star_rating(
 
 def filter_by_food_preference(
     hotels: list[dict],
-    preference: str,
+    preference: str | None,
     allow_fallback: bool = True
 ) -> tuple[list[dict], bool]:
-    """
-    Scans hotel descriptions, names, and amenities to filter and
-    tag properties according to dietary preferences (veg, non-veg, halal).
-    Returns (filtered_hotels, matched_flag).
-    """
+    """Uses word-boundary regex matching for any user-provided dietary keyword."""
     if not preference or not hotels:
         return hotels, False
 
-    pref_lower = preference.lower().strip()
+    pref_clean = preference.lower().strip()
     filtered   = []
 
+    escaped_pref   = re.escape(pref_clean)
+    exact_pattern  = re.compile(rf"\b{escaped_pref}\b", re.IGNORECASE)
+    dining_pattern = re.compile(r"\b(restaurant|dining|breakfast|buffet|cafe)\b", re.IGNORECASE)
+
     for hotel in hotels:
-        amenities     = [a.lower() for a in hotel.get("amenities", [])]
-        description   = hotel.get("description", "").lower()
-        property_name = hotel.get("name", "").lower()
-        full_text     = " ".join(amenities) + " " + description + " " + property_name
+        amenities     = [str(a) for a in hotel.get("amenities", [])]
+        description   = str(hotel.get("description", ""))
+        property_name = str(hotel.get("name", ""))
+        full_text     = f"{' '.join(amenities)} {description} {property_name}"
 
-        # Check 'non-veg' BEFORE 'veg' so "non-veg" does not trigger the "veg" substring check
-        if "non" in pref_lower:
-            if any("restaurant" in a for a in amenities) or "dining" in full_text or "breakfast" in full_text:
-                hotel["food_match_note"] = "🍗 Non-vegetarian / Multi-cuisine restaurant on-site."
-                filtered.append(hotel)
-
-        elif "veg" in pref_lower:
-            if "vegetarian" in full_text or "pure veg" in full_text or "veg options" in full_text:
-                hotel["food_match_note"] = "🌱 Vegetarian-friendly options indicated."
-                filtered.append(hotel)
-            elif any("restaurant" in a for a in amenities) or "breakfast" in full_text:
-                hotel["food_match_note"] = "🍽️ Has on-site dining/breakfast."
-                filtered.append(hotel)
-
-        elif "halal" in pref_lower:
-            if "halal" in full_text:
-                hotel["food_match_note"] = "☪️ Halal food options/certification mentioned."
-                filtered.append(hotel)
-            elif any("restaurant" in a for a in amenities):
-                hotel["food_match_note"] = "ℹ️ Has restaurant (Verify halal availability with property)."
-                filtered.append(hotel)
-
-        else:
-            if pref_lower in full_text:
-                hotel["food_match_note"] = f"🍽️ Matches '{preference}' preference."
-                filtered.append(hotel)
+        if exact_pattern.search(full_text):
+            hotel["food_match_note"] = f"🍽️ Explicitly mentions '{preference}' options."
+            filtered.append(hotel)
+        elif dining_pattern.search(full_text):
+            hotel["food_match_note"] = f"🍴 On-site dining/breakfast available (kindly verify '{preference}' options with the property)."
+            filtered.append(hotel)
 
     if not filtered:
         if allow_fallback:
-            print(f"⚠️ No hotels explicitly matched '{preference}'. Showing all available options.\n")
+            print(f"⚠️ No hotels explicitly matched '{preference}', so we are kindly showing all available options.\n")
             return hotels, False
         return [], False
 
