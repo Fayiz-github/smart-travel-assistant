@@ -280,6 +280,61 @@ def run_flight_agent(
         print()
 
 
+def explore_destinations(
+    dep_id: str,
+    candidate_airports: list[str],
+    date_str: str,
+    budget: float,
+    currency: str = "INR",
+    trip_type: str = "2",
+    stops: str = "0",
+    return_date: str | None = None
+):
+    """Searches user-specified or env-configured destinations concurrently within budget."""
+    candidates = [code for code in candidate_airports if code != dep_id][:MAX_EXPLORE_AIRPORTS]
+    if not candidates:
+        print("⚠️ No valid destination airports were provided to explore. Please try again with different airport codes.")
+        return
+
+    print(f"\n🔍 Kindly hold on while we search {len(candidates)} destination(s) for flights within {currency} {budget:,.0f}...\n")
+
+    matches = []
+
+    def _check_airport(arr_code: str):
+        flights = fetch_flights(dep_id, arr_code, date_str, currency, trip_type, stops, return_date)
+        if not flights:
+            return None
+        affordable = [f for f in flights if f["price"] <= budget]
+        if not affordable:
+            return None
+        cheapest = min(affordable, key=lambda f: f["price"])
+        legs = cheapest.get("flights", [])
+        arr_name = legs[-1].get("arrival_airport", {}).get("name", arr_code) if legs else arr_code
+        return (arr_code, arr_name, cheapest["price"])
+
+    max_workers = min(5, len(candidates))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_check_airport, code): code for code in candidates}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                matches.append(result)
+
+    if not matches:
+        print(f"😔 We're sorry, no destinations were found within {currency} {budget:,.0f} from {dep_id} on {date_str}.")
+        print("   Please consider trying a slightly higher budget or another travel date. 😊")
+        return
+
+    matches.sort(key=lambda x: x[2])
+    print(f"✅ Wonderful! We found {len(matches)} destination(s) within your budget!\n")
+    print("=" * 68)
+    for i, (code, name, price) in enumerate(matches, 1):
+        display_name = (name[:32] + "..") if len(name) > 34 else name
+        print(f"  {i:2}. ✈️  {display_name:<34} ({code})   {currency} {price:>8,.0f}")
+    print("=" * 68)
+    print("\n💡 Tip: Feel free to run the agent again and choose Option 1 to view full details for your preferred destination! 😊")
+
+
 if __name__ == "__main__":
     run_flight_agent(
         dep_id="MYQ",
