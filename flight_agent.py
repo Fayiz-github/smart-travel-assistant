@@ -234,7 +234,7 @@ def run_flight_agent(
 
     main_flights = fetch_flights(dep_id, arr_id, target_date, currency, trip_type, stops, return_date)
     if not main_flights:
-        print("No flights found for the selected date.")
+        print("😔 We couldn't find any flights for your selected date and preferences. Please try different dates or options.")
         return
 
     if trip_type == "2":
@@ -271,7 +271,7 @@ def run_flight_agent(
 
         print(f"=== {tier_name.upper()} (Showing {shown_count} of {total_in_tier} options) ===")
         if not flight_list:
-            print("  No flights in this price range.\n")
+            print("  No flights available in this price range.\n")
             continue
 
         for itinerary in flight_list[:MAX_DISPLAY_PER_TIER]:
