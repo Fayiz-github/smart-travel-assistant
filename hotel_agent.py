@@ -11,6 +11,34 @@ if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
 
 load_dotenv()
 
+
+def _env_int(key: str, default: int) -> int:
+    try:
+        return int(os.getenv(key, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
+def _env_float(key: str, default: float) -> float:
+    try:
+        val = float(os.getenv(key, str(default)))
+        return val if math.isfinite(val) else default
+    except (ValueError, TypeError):
+        return default
+
+
+# --- DYNAMIC CONFIGURATION (Safely parsed from .env) ---
+MIN_SAFE_RATING           = _env_float("MIN_SAFE_RATING", 3.5)
+HIGH_RATING_THRESHOLD     = _env_float("HIGH_RATING_THRESHOLD", 4.3)
+SIGNIFICANT_SAVINGS_RATIO = _env_float("SIGNIFICANT_SAVINGS_RATIO", 0.85)
+CHEAP_MEDIAN_FACTOR       = _env_float("HOTEL_CHEAP_MEDIAN_FACTOR", 0.75)
+BUDGET_MEDIAN_FACTOR      = _env_float("HOTEL_BUDGET_MEDIAN_FACTOR", 1.30)
+MAX_DISPLAY_PER_TIER      = _env_int("MAX_DISPLAY_PER_TIER", 3)
+MAX_AMENITIES_SHOWN       = _env_int("MAX_AMENITIES_SHOWN", 6)
+MAX_ADVANCE_DAYS          = _env_int("MAX_ADVANCE_DAYS", 330)
+MAX_STAY_NIGHTS           = _env_int("MAX_STAY_NIGHTS", 30)
+MAX_ADULTS_LIMIT          = _env_int("MAX_ADULTS_LIMIT", 20)
+
 _client = None
 
 
@@ -24,11 +52,6 @@ def get_serpapi_client() -> serpapi.Client:
         _client = serpapi.Client(api_key=api_key)
     return _client
 
-
-# --- CONFIGURATION ---
-MIN_SAFE_RATING       = 3.5    # Warn if guest rating is below 3.5 / 5.0
-HIGH_RATING_THRESHOLD = 4.3   # Highlight if guest rating is 4.3 or higher
-SIGNIFICANT_SAVINGS_RATIO = 0.85  # Alert if shifting dates is >= 15% cheaper
 
 def evaluate_hotel_details(hotel: dict) -> list[str]:
     """Checks a hotel for low ratings, deals, key amenities, and check-in/out times."""
