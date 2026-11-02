@@ -6,27 +6,29 @@ from datetime import datetime, timedelta
 import serpapi
 from dotenv import load_dotenv
 
-# Ensure UTF-8 output encoding on Windows consoles for emoji and currency symbols
 if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 load_dotenv()
 
-secret_api_key = os.getenv("SECRET_API_KEY")
-if not secret_api_key:
-    print("Error: SECRET_API_KEY is not set.")
-    exit()
+_client = None
 
-client = serpapi.Client(api_key=secret_api_key)
+
+def get_serpapi_client() -> serpapi.Client:
+    """Lazily initializes and returns the SerpApi client without import-time side effects."""
+    global _client
+    if _client is None:
+        api_key = (os.getenv("SECRET_API_KEY") or "").strip()
+        if not api_key:
+            raise RuntimeError("SECRET_API_KEY environment variable is missing or empty.")
+        _client = serpapi.Client(api_key=api_key)
+    return _client
+
 
 # --- CONFIGURATION ---
 MIN_SAFE_RATING       = 3.5    # Warn if guest rating is below 3.5 / 5.0
 HIGH_RATING_THRESHOLD = 4.3   # Highlight if guest rating is 4.3 or higher
 SIGNIFICANT_SAVINGS_RATIO = 0.85  # Alert if shifting dates is >= 15% cheaper
-
-# Important amenities to look out for in the hotel data
-KEY_AMENITIES = ["Free Wi-Fi", "Free breakfast", "Free parking", "Pool", "Air conditioning", "Room Service", "Fitness center"]
-
 
 def evaluate_hotel_details(hotel: dict) -> list[str]:
     """Checks a hotel for low ratings, deals, key amenities, and check-in/out times."""
@@ -103,6 +105,7 @@ def fetch_hotels(
         "adults": str(adults),
         "currency": currency
     }
+    client = get_serpapi_client()
     results = client.search(params)
 
     if "error" in results:
