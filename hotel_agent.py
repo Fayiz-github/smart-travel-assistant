@@ -317,8 +317,9 @@ def run_hotel_agent(
     check_out_date: str,
     adults: int = 2,
     currency: str = "INR",
-    star_rating: int | list[int] = None,
-    food_preference: str = None
+    min_star: int | None = None,
+    only_exact_star: bool = False,
+    food_preference: str | None = None
 ):
     in_date_obj  = datetime.strptime(check_in_date,  "%Y-%m-%d")
     out_date_obj = datetime.strptime(check_out_date, "%Y-%m-%d")
@@ -326,10 +327,11 @@ def run_hotel_agent(
         print("Error: check_out_date must be after check_in_date.")
         return
 
+    star_desc = f"{min_star}★ only" if (min_star and only_exact_star) else (f"{min_star}★+" if min_star else "")
     print(
         f"🏨 Searching hotels in '{location_query}' "
-        f"({check_in_date} to {check_out_date}) for {adults} adults"
-        f"{f' [Stars: {star_rating}]' if star_rating else ''}"
+        f"({check_in_date} to {check_out_date}) for {adults} adult(s)"
+        f"{f' [Stars: {star_desc}]' if star_desc else ''}"
         f"{f' [Food: {food_preference}]' if food_preference else ''}...\n"
     )
 
@@ -338,39 +340,44 @@ def run_hotel_agent(
         print("No hotels found for the selected dates.")
         return
 
-    # Apply star rating and food preference filters (tracking which filters matched)
     star_matched = False
     food_matched = False
 
-    if star_rating:
-        main_hotels, star_matched = filter_by_star_rating(main_hotels, star_rating, allow_fallback=True)
+    if min_star:
+        main_hotels, star_matched = filter_by_star_rating(
+            main_hotels, min_star, only_exact=only_exact_star, allow_fallback=True
+        )
 
     if food_preference:
         main_hotels, food_matched = filter_by_food_preference(main_hotels, food_preference, allow_fallback=True)
 
-    # 🛑 CRITICAL SAFETY CHECK: Stop if filters wiped out all results
     if not main_hotels:
-        print("❌ No hotels match your combined star rating and food preference filters for these dates.")
+        print("No hotels matched your filters for these dates.")
         return
 
-    # Check adjacent dates (+/- 1 day shift) for cheaper nightly rates
-    adjacent_shifts = [
-        ("1 day earlier",
-         (in_date_obj  - timedelta(days=1)).strftime("%Y-%m-%d"),
-         (out_date_obj - timedelta(days=1)).strftime("%Y-%m-%d")),
-        ("1 day later",
-         (in_date_obj  + timedelta(days=1)).strftime("%Y-%m-%d"),
-         (out_date_obj + timedelta(days=1)).strftime("%Y-%m-%d"))
-    ]
+    today_date = datetime.today().date()
+    max_date   = today_date + timedelta(days=MAX_ADVANCE_DAYS)
+    adjacent_shifts = []
+
+    prev_in  = in_date_obj - timedelta(days=1)
+    prev_out = out_date_obj - timedelta(days=1)
+    if prev_in.date() >= today_date:
+        adjacent_shifts.append(("1 day earlier", prev_in.strftime("%Y-%m-%d"), prev_out.strftime("%Y-%m-%d")))
+
+    next_in  = in_date_obj + timedelta(days=1)
+    next_out = out_date_obj + timedelta(days=1)
+    if next_out.date() <= max_date:
+        adjacent_shifts.append(("1 day later", next_in.strftime("%Y-%m-%d"), next_out.strftime("%Y-%m-%d")))
 
     min_main_price = min(h["price"] for h in main_hotels)
 
     for shift_label, adj_in, adj_out in adjacent_shifts:
         adj_hotels = fetch_hotels(location_query, adj_in, adj_out, adults, currency)
 
-        # Apply strict filtering ONLY for filters that actually matched on the main date
         if star_matched:
-            adj_hotels, _ = filter_by_star_rating(adj_hotels, star_rating, allow_fallback=False)
+            adj_hotels, _ = filter_by_star_rating(
+                adj_hotels, min_star, only_exact=only_exact_star, allow_fallback=False
+            )
         if food_matched:
             adj_hotels, _ = filter_by_food_preference(adj_hotels, food_preference, allow_fallback=False)
 
@@ -388,14 +395,14 @@ def run_hotel_agent(
 
     for tier_name, hotel_list in price_tiers.items():
         total_in_tier = len(hotel_list)
-        shown_count   = min(3, total_in_tier)
+        shown_count   = min(MAX_DISPLAY_PER_TIER, total_in_tier)
 
         print(f"=== {tier_name.upper()} (Showing {shown_count} of {total_in_tier} options) ===")
         if not hotel_list:
             print("  No hotels in this price range.\n")
             continue
 
-        for hotel in hotel_list[:3]:
+        for hotel in hotel_list[:MAX_DISPLAY_PER_TIER]:
             print(format_hotel_summary(hotel, currency))
             print("-" * 55)
         print()
