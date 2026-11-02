@@ -57,9 +57,10 @@ def get_serpapi_client() -> serpapi.Client:
 
 
 def evaluate_layovers(itinerary: dict) -> list[str]:
-    """Checks an itinerary for short or long connection times."""
+    """Dynamically evaluates layovers using SerpApi response fields."""
     warnings = []
     layovers = itinerary.get("layovers", [])
+    flights  = itinerary.get("flights", [])
 
     if not layovers:
         return ["Direct flight (No layovers)"]
@@ -67,7 +68,7 @@ def evaluate_layovers(itinerary: dict) -> list[str]:
     for layover in layovers:
         duration     = layover.get("duration", 0)
         airport_name = layover.get("name", "Unknown Airport")
-        airport_code = layover.get("id", "")
+        airport_code = layover.get("id", "N/A")
 
         hours, mins = divmod(duration, 60)
         time_str = f"{hours}h {mins}m" if hours else f"{mins}m"
@@ -85,11 +86,17 @@ def evaluate_layovers(itinerary: dict) -> list[str]:
                 f"✅ Comfortable layover at {airport_name} ({airport_code}): {time_str}."
             )
 
-        # Check if SerpApi flagged an overnight layover
         if layover.get("overnight"):
             warnings.append(f"🌙 OVERNIGHT layover at {airport_code}.")
 
+    if len(flights) > 1:
+        warnings.append(
+            "🛂 CONNECTION NOTE: Kindly verify if your transit airport(s) require a transit visa or self-transfer."
+        )
 
+    for ext in itinerary.get("extensions", []):
+        if isinstance(ext, str) and any(k in ext.lower() for k in ("visa", "transfer", "change", "baggage")):
+            warnings.append(f"ℹ️ {ext}")
 
     return warnings
 
