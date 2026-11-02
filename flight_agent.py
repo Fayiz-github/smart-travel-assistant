@@ -148,28 +148,19 @@ def fetch_flights(
 
 
 def group_into_tiers(flights: list[dict]) -> dict[str, list[dict]]:
-    """
-    Groups flights into price tiers relative to the lowest price:
-    - Cheap Tier:   Up to 20% more than the lowest price
-    - Budget Tier:  More than 20% up to 40% higher than the lowest price
-    - Premium Tier: More than 40% higher than the lowest price
-    """
+    """Groups flights into price tiers relative to the lowest price, with a percentile fallback."""
     if not flights:
         return {}
 
     sorted_flights = sorted(flights, key=lambda x: x["price"])
+    unique_prices  = sorted({f["price"] for f in sorted_flights})
 
-    if len(sorted_flights) <= 2:
+    if len(unique_prices) <= 2:
         return {"Available Flights": sorted_flights}
 
-    min_price = sorted_flights[0]["price"]
-    max_price = sorted_flights[-1]["price"]
-
-    if min_price == max_price:
-        return {"Available Flights": sorted_flights}
-
-    cheap_cutoff  = min_price * 1.20
-    budget_cutoff = min_price * 1.40
+    min_price     = sorted_flights[0]["price"]
+    cheap_cutoff  = min_price * CHEAP_TIER_MULTIPLIER
+    budget_cutoff = min_price * BUDGET_TIER_MULTIPLIER
 
     tiers = {"Cheap Tier": [], "Budget Tier": [], "Premium Tier": []}
     for f in sorted_flights:
@@ -180,6 +171,21 @@ def group_into_tiers(flights: list[dict]) -> dict[str, list[dict]]:
             tiers["Budget Tier"].append(f)
         else:
             tiers["Premium Tier"].append(f)
+
+    if not all(tiers.values()):
+        u_len         = len(unique_prices)
+        cheap_cutoff  = unique_prices[max(0, (u_len // 3) - 1)]
+        budget_cutoff = unique_prices[max(1, ((u_len * 2) // 3) - 1)]
+
+        tiers = {"Cheap Tier": [], "Budget Tier": [], "Premium Tier": []}
+        for f in sorted_flights:
+            price = f["price"]
+            if price <= cheap_cutoff:
+                tiers["Cheap Tier"].append(f)
+            elif price <= budget_cutoff:
+                tiers["Budget Tier"].append(f)
+            else:
+                tiers["Premium Tier"].append(f)
 
     return tiers
 
