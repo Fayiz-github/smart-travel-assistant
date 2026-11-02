@@ -337,7 +337,7 @@ def run_hotel_agent(
 
     main_hotels = fetch_hotels(location_query, check_in_date, check_out_date, adults, currency)
     if not main_hotels:
-        print("No hotels found for the selected dates.")
+        print("😔 We couldn't find any hotels for your selected dates. Please try different dates or another area.")
         return
 
     star_matched = False
@@ -352,7 +352,7 @@ def run_hotel_agent(
         main_hotels, food_matched = filter_by_food_preference(main_hotels, food_preference, allow_fallback=True)
 
     if not main_hotels:
-        print("No hotels matched your filters for these dates.")
+        print("😔 We're sorry, no hotels matched your combined filters for these dates.")
         return
 
     today_date = datetime.today().date()
@@ -399,7 +399,7 @@ def run_hotel_agent(
 
         print(f"=== {tier_name.upper()} (Showing {shown_count} of {total_in_tier} options) ===")
         if not hotel_list:
-            print("  No hotels in this price range.\n")
+            print("  No hotels available in this price range.\n")
             continue
 
         for hotel in hotel_list[:MAX_DISPLAY_PER_TIER]:
