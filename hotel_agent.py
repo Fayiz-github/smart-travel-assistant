@@ -176,50 +176,36 @@ def fetch_hotels(
 
 def filter_by_star_rating(
     hotels: list[dict],
-    target_stars: int | list[int],
+    min_star: int | None,
+    only_exact: bool = False,
     allow_fallback: bool = True
 ) -> tuple[list[dict], bool]:
-    """
-    Filters the hotel list to match specific star classifications.
-    Returns (filtered_hotels, matched_flag).
-    """
-    if not target_stars or not hotels:
-        return hotels, False
-
-    if isinstance(target_stars, int):
-        target_stars = [target_stars]
-    elif isinstance(target_stars, str):
-        digits = [int(d) for d in re.findall(r'\d+', target_stars)]
-        target_stars = digits if digits else []
-
-    if not target_stars:
+    """Dynamically filters hotels >= min_star (or == min_star if only_exact is True)."""
+    if not min_star or not hotels:
         return hotels, False
 
     filtered = []
     for hotel in hotels:
         star_class = hotel.get("extracted_hotel_class")
-
-        # Normalize to int — SerpApi may return a string like "4" or an int
         if star_class is not None:
             try:
                 star_class = int(star_class)
             except (ValueError, TypeError):
                 star_class = None
 
-        # Fallback: parse star digit from hotel_class string e.g. "4-star hotel"
         if star_class is None:
             hc_str = str(hotel.get("hotel_class", ""))
-            match = re.search(r'(\d)', hc_str)
+            match  = re.search(r"\b([1-5])\b", hc_str)
             if match:
                 star_class = int(match.group(1))
 
-        if star_class in target_stars:
-            filtered.append(hotel)
-
+        if star_class is not None:
+            if (only_exact and star_class == min_star) or (not only_exact and star_class >= min_star):
+                filtered.append(hotel)
 
     if not filtered:
         if allow_fallback:
-            print(f"⚠️ No hotels found matching star rating {target_stars}. Showing all available options instead.\n")
+            print(f"⚠️ We couldn't find hotels matching {min_star}+ stars, so we are kindly showing all available options instead.\n")
             return hotels, False
         return [], False
 
