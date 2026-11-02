@@ -75,10 +75,9 @@ def get_serpapi_client() -> serpapi.Client:
 
 
 def evaluate_hotel_details(hotel: dict) -> list[str]:
-    """Checks a hotel for low ratings, deals, key amenities, and check-in/out times."""
+    """Dynamically evaluates a hotel for ratings, deals, amenities, dietary match, and timings."""
     notes = []
 
-    # 1. Check Guest Rating & Reviews
     rating  = hotel.get("overall_rating")
     reviews = hotel.get("reviews", 0)
 
@@ -91,27 +90,27 @@ def evaluate_hotel_details(hotel: dict) -> list[str]:
     else:
         notes.append(f"✅ Decent Rating: {rating}/5 ({reviews:,} reviews).")
 
-    # 2. Check for Special Deals
     deal = hotel.get("deal")
     if deal:
         notes.append(f"🏷️ SPECIAL DEAL: {deal}")
 
-    # 3. Check Key Amenities
-    amenities     = hotel.get("amenities", [])
-    matched_perks = [perk for perk in KEY_AMENITIES if perk in amenities]
-    if matched_perks:
-        notes.append(f"🛎️ Perks Included: {', '.join(matched_perks)}")
+    amenities = [a for a in hotel.get("amenities", []) if isinstance(a, str) and a.strip()]
+    if amenities:
+        shown = amenities[:MAX_AMENITIES_SHOWN]
+        extra = f" (+{len(amenities) - len(shown)} more)" if len(amenities) > len(shown) else ""
+        notes.append(f"🛎️ Amenities: {', '.join(shown)}{extra}")
     else:
-        notes.append("ℹ️ No free breakfast or major perks listed.")
+        notes.append("ℹ️ No specific amenities listed.")
 
-    # 4. Check-in / Check-out timings
+    if hotel.get("food_match_note"):
+        notes.append(hotel["food_match_note"])
+
     check_in_time  = hotel.get("check_in_time")
     check_out_time = hotel.get("check_out_time")
     if check_in_time or check_out_time:
         notes.append(f"🕒 Timings: Check-in {check_in_time or 'N/A'} | Check-out {check_out_time or 'N/A'}")
 
     return notes
-
 
 
 def extract_nightly_price(property_item: dict, num_nights: int = 1) -> float | None:
