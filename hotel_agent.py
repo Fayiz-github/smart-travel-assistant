@@ -135,7 +135,7 @@ def fetch_hotels(
     adults: int = 2,
     currency: str = "INR"
 ) -> list[dict]:
-    """Fetches hotels from SerpApi and attaches a clean 'price' key to each valid hotel."""
+    """Fetches hotels from SerpApi safely and attaches a clean 'price' key."""
     params = {
         "engine": "google_hotels",
         "q": location_query,
@@ -144,26 +144,32 @@ def fetch_hotels(
         "adults": str(adults),
         "currency": currency
     }
-    client = get_serpapi_client()
-    results = client.search(params)
+
+    try:
+        client  = get_serpapi_client()
+        results = client.search(params)
+    except Exception as exc:
+        print(f"⚠️ Network/API Error while fetching hotels for {check_in_date}: {exc}")
+        return []
+
+    if results is None or not hasattr(results, "get"):
+        return []
 
     if "error" in results:
-        print(f"API Error for {check_in_date}: {results['error']}")
+        print(f"⚠️ API Error for {check_in_date}: {results['error']}")
         return []
 
     in_date    = datetime.strptime(check_in_date,  "%Y-%m-%d")
     out_date   = datetime.strptime(check_out_date, "%Y-%m-%d")
     num_nights = max(1, (out_date - in_date).days)
 
-    raw_properties = results.get("properties", [])
-    valid_hotels   = []
-
-    for prop in raw_properties:
+    valid_hotels = []
+    for prop in results.get("properties", []):
         price = extract_nightly_price(prop, num_nights)
         if price is not None:
-            hotel = dict(prop)
-            hotel["price"] = price
-            valid_hotels.append(hotel)
+            prop_copy = dict(prop)
+            prop_copy["price"] = price
+            valid_hotels.append(prop_copy)
 
     return valid_hotels
 
