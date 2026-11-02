@@ -335,12 +335,187 @@ def explore_destinations(
     print("\n💡 Tip: Feel free to run the agent again and choose Option 1 to view full details for your preferred destination! 😊")
 
 
+def main():
+    try:
+        get_serpapi_client()
+    except RuntimeError as err:
+        print(f"Error: {err}")
+        sys.exit(1)
+
+    print("✈️  Welcome to the Flight Search Agent!")
+    print("   We're delighted to help you find the best flights today. Let's get started! 😊")
+    print("-" * 55)
+
+    today_date = datetime.today().date()
+    max_date   = today_date + timedelta(days=MAX_ADVANCE_DAYS)
+
+    # --- Departure airport code ---
+    while True:
+        dep_id = input(
+            "\n📍 Could you please share your 3-letter departure airport code?\n"
+            "   (For example, CCJ, BLR, BOM, or DEL): "
+        ).strip().upper()
+        if is_valid_code(dep_id):
+            break
+        print("   Hmm, that doesn't look quite right. 😊 Airport codes are exactly 3 standard letters (A-Z). Could you please try again?")
+
+    # --- Mode selection ---
+    while True:
+        print("\n🌍 May we ask if you have a specific destination in mind?")
+        print("     1 - Yes, I know where I would like to fly")
+        print("     2 - No, please help me compare destinations within my budget")
+        mode_input = input("\n   Please enter your choice (1 or 2): ").strip()
+        if mode_input in {"1", "2"}:
+            break
+        print(f"   We're sorry, '{mode_input}' isn't a valid option. 😊 Could you please enter 1 or 2?")
+
+    # --- Arrival airport(s) ---
+    arr_id = None
+    candidate_airports = []
+    if mode_input == "1":
+        while True:
+            arr_id = input(
+                "\n🛬 Where would you like to fly to? Please enter the 3-letter arrival airport code:\n"
+                "   (For example, MAA, DXB, or SIN): "
+            ).strip().upper()
+            if not is_valid_code(arr_id):
+                print("   Hmm, that doesn't look quite right. 😊 Please enter a 3-letter standard airport code (A-Z).")
+            elif arr_id == dep_id:
+                print(f"   Oops! Your arrival airport cannot be the same as your departure ({dep_id}). 😊 Please choose a different destination.")
+            else:
+                break
+    else:
+        env_airports = [
+            c.strip().upper()
+            for c in os.getenv("EXPLORE_AIRPORTS", "").split(",")
+            if is_valid_code(c.strip().upper()) and c.strip().upper() != dep_id
+        ]
+        while True:
+            prompt_msg = (
+                f"\n🗺️  Could you please enter up to {MAX_EXPLORE_AIRPORTS} airport codes (3 letters each) separated by commas?\n"
+                "   (For example: BLR, DEL, DXB, SIN)"
+            )
+            if env_airports:
+                prompt_msg += f"\n   (Or kindly press Enter to use your saved list: {', '.join(env_airports[:MAX_EXPLORE_AIRPORTS])})"
+            raw_codes = input(f"{prompt_msg}: ").strip()
+            if not raw_codes and env_airports:
+                candidate_airports = env_airports[:MAX_EXPLORE_AIRPORTS]
+                break
+
+            parsed = [c.strip().upper() for c in raw_codes.split(",") if c.strip()]
+            if not parsed or not all(is_valid_code(c) for c in parsed):
+                print("   Could you please enter valid 3-letter airport codes (A-Z) separated by commas? 😊")
+                continue
+
+            unique_valid = [c for c in dict.fromkeys(parsed) if c != dep_id]
+            if not unique_valid:
+                print(f"   Oops! All entered airports matched your departure airport ({dep_id}). 😊 Please enter at least one different destination.")
+                continue
+
+            if len(unique_valid) > MAX_EXPLORE_AIRPORTS:
+                print(f"   ℹ️ To protect your search quota, we'll kindly check the first {MAX_EXPLORE_AIRPORTS} airports.")
+                unique_valid = unique_valid[:MAX_EXPLORE_AIRPORTS]
+
+            candidate_airports = unique_valid
+            break
+
+    # --- Travel date ---
+    while True:
+        target_date = input(
+            "\n📅 What date are you planning to travel? Please use the YYYY-MM-DD format: "
+        ).strip()
+        try:
+            travel_dt = datetime.strptime(target_date, "%Y-%m-%d")
+            if travel_dt.date() < today_date:
+                print("   It looks like that date has already passed. 😊 Could you please enter today's date or a future date?")
+            elif travel_dt.date() > max_date:
+                print(f"   Airlines only publish schedules up to {MAX_ADVANCE_DAYS} days in advance ({max_date}). 😊 Please choose an earlier date.")
+            else:
+                break
+        except ValueError:
+            print("   Oops! That doesn't look like a valid calendar date. 😊 Please use YYYY-MM-DD.")
+
+    # --- Currency ---
+    default_curr = os.getenv("DEFAULT_CURRENCY", "INR").strip().upper()
+    if not is_valid_code(default_curr):
+        default_curr = "INR"
+
+    while True:
+        currency = input(
+            f"\n💱 Which currency would you prefer for viewing prices?\n"
+            f"   (Kindly press Enter for {default_curr}, or type a 3-letter code like USD, EUR, AED): "
+        ).strip().upper() or default_curr
+        if is_valid_code(currency):
+            break
+        print("   Currency codes should be exactly 3 standard letters (e.g., INR, USD, EUR). 😊 Could you please try again?")
+
+    # --- Budget (Explore Mode only) ---
+    budget = None
+    if mode_input == "2":
+        while True:
+            budget_input = input(
+                f"\n💰 May we know your maximum budget per person in {currency}? "
+            ).strip().replace(",", "")
+            try:
+                val = float(budget_input)
+                if math.isfinite(val) and val > 0:
+                    budget = val
+                    break
+            except ValueError:
+                pass
+            print("   Could you please enter a valid positive number for your budget? 😊")
+
+    # --- Trip type ---
+    while True:
+        print("\n🔄 What type of trip are you planning?")
+        print("     1 - Round Trip (Two-Way)")
+        print("     2 - One-Way")
+        trip_type = input("\n   Please enter your choice (1 or 2): ").strip()
+        if trip_type in {"1", "2"}:
+            break
+        print(f"   We're sorry, '{trip_type}' isn't a valid option. 😊 Please enter 1 or 2.")
+
+    # --- Return date (Round Trip only) ---
+    return_date = None
+    if trip_type == "1":
+        while True:
+            return_date = input(
+                "\n📅 Could you please share your return date in YYYY-MM-DD format? "
+            ).strip()
+            try:
+                ret_dt = datetime.strptime(return_date, "%Y-%m-%d")
+                if ret_dt.date() <= travel_dt.date():
+                    print("   Your return date needs to be after your departure date. 😊 Could you please enter a later date?")
+                elif ret_dt.date() > max_date:
+                    print(f"   Return date must be within {MAX_ADVANCE_DAYS} days from today ({max_date}). 😊 Please choose an earlier date.")
+                else:
+                    break
+            except ValueError:
+                print("   Oops! That doesn't look like a valid calendar date. 😊 Please use YYYY-MM-DD format.")
+
+    # --- Stops preference ---
+    STOPS_MAP = {"1": "1", "2": "2", "3": "0"}
+    while True:
+        print("\n🛑 Do you have a preference for flight stops?")
+        print("     1 - Nonstop flights only")
+        print("     2 - Up to 1 stop")
+        print("     3 - Any number of stops (show all options)")
+        stops_input = input("\n   Please enter your choice (1, 2, or 3): ").strip()
+        if stops_input in STOPS_MAP:
+            stops = STOPS_MAP[stops_input]
+            break
+        print(f"   We're sorry, '{stops_input}' isn't a valid option. 😊 Please enter 1, 2, or 3.")
+
+    print("\n✨ Thank you so much! Please hold on for a moment while we find the best flights for you...\n")
+    if mode_input == "1":
+        run_flight_agent(dep_id, arr_id, target_date, currency, trip_type, stops, return_date)
+    else:
+        explore_destinations(dep_id, candidate_airports, target_date, budget, currency, trip_type, stops, return_date)
+
+
 if __name__ == "__main__":
-    run_flight_agent(
-        dep_id="MYQ",
-        arr_id="MAA",
-        target_date="2026-10-29",
-        currency="INR"
-    )
-
-
+    try:
+        main()
+    except (KeyboardInterrupt, EOFError):
+        print("\n\n👋 Thank you for visiting the Flight Search Agent! Have a wonderful day and safe travels! 😊")
+        sys.exit(0)
