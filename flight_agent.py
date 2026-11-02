@@ -192,26 +192,27 @@ def group_into_tiers(flights: list[dict]) -> dict[str, list[dict]]:
 
 def format_flight_summary(itinerary: dict, currency: str = "INR") -> str:
     """Formats a single flight itinerary for display."""
-    price          = itinerary.get("price", "N/A")
+    price          = itinerary.get("price", 0)
+    price_str      = f"{price:,.0f}" if isinstance(price, (int, float)) else "N/A"
     total_duration = itinerary.get("total_duration", 0)
     hours, mins    = divmod(total_duration, 60)
 
     connecting_flights = itinerary.get("flights", [])
     if not connecting_flights:
-        return f"Price: {currency} {price}"
+        return f"Price: {currency} {price_str}"
 
     first_flight = connecting_flights[0]
     last_flight  = connecting_flights[-1]
 
-    airlines = ", ".join(sorted(set(flight.get("airline", "") for flight in connecting_flights)))
+    airlines = ", ".join(sorted({f.get("airline", "Unknown") for f in connecting_flights if f.get("airline")}))
     dep_time = first_flight.get("departure_airport", {}).get("time", "N/A")
     arr_time = last_flight.get("arrival_airport", {}).get("time", "N/A")
 
     layover_notes = evaluate_layovers(itinerary)
-    notes_str = "\n      ".join(layover_notes)
+    notes_str     = "\n      ".join(layover_notes)
 
     return (
-        f"• {airlines} | {currency} {price:,} | Total Time: {hours}h {mins}m\n"
+        f"• {airlines} | {currency} {price_str} | Total Time: {hours}h {mins}m\n"
         f"  Departs: {dep_time} -> Arrives: {arr_time}\n"
         f"  Layover Notes:\n      {notes_str}"
     )
