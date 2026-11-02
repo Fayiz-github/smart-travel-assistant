@@ -114,19 +114,15 @@ def evaluate_hotel_details(hotel: dict) -> list[str]:
 
 
 def extract_nightly_price(property_item: dict, num_nights: int = 1) -> float | None:
-    """
-    Extracts a positive numerical nightly rate from a hotel property dictionary.
-    Falls back to dividing the total rate by the number of nights if rate_per_night is missing.
-    """
+    """Extracts a positive finite nightly rate or divides total rate by nights."""
     rate_info = property_item.get("rate_per_night", {})
     price = rate_info.get("extracted_lowest")
-    if isinstance(price, (int, float)) and price > 0:
+    if isinstance(price, (int, float)) and not isinstance(price, bool) and math.isfinite(price) and price > 0:
         return float(price)
 
-    # Fallback: divide total rate by number of nights
     total_info  = property_item.get("total_rate", {})
     total_price = total_info.get("extracted_lowest")
-    if isinstance(total_price, (int, float)) and total_price > 0:
+    if isinstance(total_price, (int, float)) and not isinstance(total_price, bool) and math.isfinite(total_price) and total_price > 0:
         return round(float(total_price) / max(1, num_nights), 2)
 
     return None
