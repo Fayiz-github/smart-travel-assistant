@@ -40,6 +40,11 @@ MAX_EXPLORE_AIRPORTS      = _env_int("MAX_EXPLORE_AIRPORTS", 10)
 _client = None
 
 
+def is_valid_code(code: str) -> bool:
+    """Validates standard 3-letter ASCII IATA/ISO codes (A-Z only)."""
+    return len(code) == 3 and code.isascii() and code.isalpha()
+
+
 def get_serpapi_client() -> serpapi.Client:
     """Lazily initializes and returns the SerpApi client without import-time side effects."""
     global _client
