@@ -218,44 +218,63 @@ def format_flight_summary(itinerary: dict, currency: str = "INR") -> str:
     )
 
 
-def run_flight_agent(dep_id: str, arr_id: str, target_date: str, currency: str = "INR"):
-    print(f"🔎 Searching flights from {dep_id} to {arr_id} on {target_date}...\n")
+def run_flight_agent(
+    dep_id: str,
+    arr_id: str,
+    target_date: str,
+    currency: str = "INR",
+    trip_type: str = "2",
+    stops: str = "0",
+    return_date: str | None = None
+):
+    trip_label  = "Round Trip" if trip_type == "1" else "One-Way"
+    stops_label = {"1": "Nonstop", "2": "Up to 1 stop"}.get(stops, "Any stops")
+    date_range  = f"{target_date} → {return_date}" if trip_type == "1" and return_date else target_date
+    print(f"🔎 Searching {trip_label} ({stops_label}) flights from {dep_id} to {arr_id} on {date_range}...\n")
 
-    main_flights = fetch_flights(dep_id, arr_id, target_date, currency)
+    main_flights = fetch_flights(dep_id, arr_id, target_date, currency, trip_type, stops, return_date)
     if not main_flights:
         print("No flights found for the selected date.")
         return
 
-    # Check adjacent dates (+/- 1 day) for cheaper fares
-    date_obj  = datetime.strptime(target_date, "%Y-%m-%d")
-    prev_date = (date_obj - timedelta(days=1)).strftime("%Y-%m-%d")
-    next_date = (date_obj + timedelta(days=1)).strftime("%Y-%m-%d")
+    if trip_type == "2":
+        date_obj       = datetime.strptime(target_date, "%Y-%m-%d")
+        today_date     = datetime.today().date()
+        max_date       = today_date + timedelta(days=MAX_ADVANCE_DAYS)
+        min_main_price = min(f["price"] for f in main_flights)
 
-    min_main_price = min(f["price"] for f in main_flights)
+        adjacent_candidates = []
+        prev_dt = date_obj - timedelta(days=1)
+        if prev_dt.date() >= today_date:
+            adjacent_candidates.append(("day before", prev_dt.strftime("%Y-%m-%d")))
 
-    for adj_label, adj_date in [("day before", prev_date), ("day after", next_date)]:
-        adj_flights = fetch_flights(dep_id, arr_id, adj_date, currency)
-        if adj_flights:
-            min_adj_price = min(f["price"] for f in adj_flights)
-            if min_adj_price <= min_main_price * SIGNIFICANT_SAVINGS_RATIO:
-                savings = min_main_price - min_adj_price
-                print(
-                    f"💡 FLEXIBLE DATE TIP: Leaving the {adj_label} ({adj_date}) starts at "
-                    f"{currency} {min_adj_price:,} (Save {currency} {savings:,} vs {target_date})!\n"
-                )
+        next_dt = date_obj + timedelta(days=1)
+        if next_dt.date() <= max_date:
+            adjacent_candidates.append(("day after", next_dt.strftime("%Y-%m-%d")))
+
+        for adj_label, adj_date in adjacent_candidates:
+            adj_flights = fetch_flights(dep_id, arr_id, adj_date, currency, trip_type, stops)
+            if adj_flights:
+                min_adj_price = min(f["price"] for f in adj_flights)
+                if min_adj_price <= min_main_price * SIGNIFICANT_SAVINGS_RATIO:
+                    savings = min_main_price - min_adj_price
+                    print(
+                        f"💡 FLEXIBLE DATE TIP: Leaving the {adj_label} ({adj_date}) starts at "
+                        f"{currency} {min_adj_price:,.0f} (Save {currency} {savings:,.0f} vs {target_date})!\n"
+                    )
 
     price_tiers = group_into_tiers(main_flights)
 
     for tier_name, flight_list in price_tiers.items():
         total_in_tier = len(flight_list)
-        shown_count   = min(3, total_in_tier)
+        shown_count   = min(MAX_DISPLAY_PER_TIER, total_in_tier)
 
         print(f"=== {tier_name.upper()} (Showing {shown_count} of {total_in_tier} options) ===")
         if not flight_list:
             print("  No flights in this price range.\n")
             continue
 
-        for itinerary in flight_list[:3]:
+        for itinerary in flight_list[:MAX_DISPLAY_PER_TIER]:
             print(format_flight_summary(itinerary, currency))
             print("-" * 50)
         print()
