@@ -101,29 +101,50 @@ def evaluate_layovers(itinerary: dict) -> list[str]:
     return warnings
 
 
-def fetch_flights(dep_id: str, arr_id: str, date_str: str, currency: str = "INR"):
-    """Fetches and combines both 'best_flights' and 'other_flights' from SerpApi."""
+def fetch_flights(
+    dep_id: str,
+    arr_id: str,
+    date_str: str,
+    currency: str = "INR",
+    trip_type: str = "2",
+    stops: str = "0",
+    return_date: str | None = None
+) -> list[dict]:
+    """Fetches and combines 'best_flights' and 'other_flights' from SerpApi safely."""
     params = {
         "engine": "google_flights",
         "departure_id": dep_id,
         "arrival_id": arr_id,
         "currency": currency,
-        "type": "2",  # One-way
+        "type": trip_type,
+        "stops": stops,
         "outbound_date": date_str
     }
-    client = get_serpapi_client()
-    results = client.search(params)
+    if trip_type == "1" and return_date:
+        params["return_date"] = return_date
 
-    if "error" in results:
-        print(f"API Error for {date_str}: {results['error']}")
+    try:
+        client  = get_serpapi_client()
+        results = client.search(params)
+    except Exception as exc:
+        print(f"⚠️ Network/API Error while fetching flights for {arr_id} on {date_str}: {exc}")
         return []
 
-    # Combine best_flights and other_flights so we don't miss cheap options
-    all_flights = results.get("best_flights", []) + results.get("other_flights", [])
+    if results is None or not hasattr(results, "get"):
+        return []
 
-    # Filter out any entries missing a valid price
-    valid_flights = [f for f in all_flights if isinstance(f.get("price"), (int, float))]
-    return valid_flights
+    if "error" in results:
+        print(f"⚠️ API Error for {arr_id} ({date_str}): {results['error']}")
+        return []
+
+    all_flights = results.get("best_flights", []) + results.get("other_flights", [])
+    return [
+        f for f in all_flights
+        if isinstance(f.get("price"), (int, float))
+        and not isinstance(f.get("price"), bool)
+        and math.isfinite(f["price"])
+        and f["price"] > 0
+    ]
 
 
 def group_into_tiers(flights: list[dict]) -> dict[str, list[dict]]:
