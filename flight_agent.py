@@ -6,6 +6,9 @@ from datetime import datetime, timedelta
 import serpapi
 from dotenv import load_dotenv
 
+if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 # --- CONFIGURATION ---
 MIN_SAFE_LAYOVER_MINS    = 60       # Warn if connection is under 1 hour
 MAX_COMFORT_LAYOVER_MINS = 360      # Warn if connection is over 6 hours
