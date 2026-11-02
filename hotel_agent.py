@@ -161,8 +161,9 @@ def fetch_hotels(
     for prop in raw_properties:
         price = extract_nightly_price(prop, num_nights)
         if price is not None:
-            prop["price"] = price
-            valid_hotels.append(prop)
+            hotel = dict(prop)
+            hotel["price"] = price
+            valid_hotels.append(hotel)
 
     return valid_hotels
 
