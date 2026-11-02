@@ -408,13 +408,148 @@ def run_hotel_agent(
         print()
 
 
-if __name__ == "__main__":
+def main():
+    try:
+        get_serpapi_client()
+    except RuntimeError as err:
+        print(f"Error: {err}")
+        sys.exit(1)
+
+    print("🏨  Welcome to the Hotel Search Agent!")
+    print("   We'd love to help you find the perfect stay. Let's get started! 😊")
+    print("-" * 55)
+
+    today_date = datetime.today().date()
+    max_date   = today_date + timedelta(days=MAX_ADVANCE_DAYS)
+
+    # --- Destination ---
+    while True:
+        location_query = input(
+            "\n📍 Where are you planning to stay? Could you please tell us your destination city or area?\n"
+            "   (For example, Mumbai, St. Louis, or Dubai): "
+        ).strip()
+        if is_valid_location(location_query):
+            break
+        if not location_query:
+            print("   Destination cannot be empty. 😊 Could you please enter a city or area name?")
+        else:
+            print("   Hmm, that doesn't look like a valid city or area name. 😊 Please use letters and spaces (e.g., New Delhi, Kuala Lumpur).")
+
+    # --- Check-in date ---
+    while True:
+        check_in_date = input(
+            "\n📅 Could you please share your check-in date in YYYY-MM-DD format? "
+        ).strip()
+        try:
+            in_dt = datetime.strptime(check_in_date, "%Y-%m-%d")
+            if in_dt.date() < today_date:
+                print("   It looks like that date has already passed. 😊 Please enter today's date or a future check-in date.")
+            elif in_dt.date() > max_date:
+                print(f"   Hotels typically accept bookings up to {MAX_ADVANCE_DAYS} days in advance ({max_date}). 😊 Please choose an earlier date.")
+            else:
+                break
+        except ValueError:
+            print("   Oops! That doesn't look like a valid calendar date. 😊 Please use the YYYY-MM-DD format.")
+
+    # --- Check-out date ---
+    while True:
+        check_out_date = input(
+            "\n📅 And what would be your check-out date? (Please use YYYY-MM-DD format): "
+        ).strip()
+        try:
+            out_dt = datetime.strptime(check_out_date, "%Y-%m-%d")
+            stay_nights = (out_dt.date() - in_dt.date()).days
+            if stay_nights <= 0:
+                print("   Check-out must be at least one day after check-in. 😊 Could you please enter a later date?")
+            elif stay_nights > MAX_STAY_NIGHTS:
+                print(f"   Standard hotel searches support stays up to {MAX_STAY_NIGHTS} nights. 😊 Could you please choose an earlier check-out date?")
+            elif out_dt.date() > max_date:
+                print(f"   Check-out date must be within {MAX_ADVANCE_DAYS} days from today ({max_date}). 😊 Please choose an earlier date.")
+            else:
+                break
+        except ValueError:
+            print("   Oops! That doesn't look like a valid calendar date. 😊 Please use the YYYY-MM-DD format.")
+
+    # --- Number of adults ---
+    default_adults = _env_int("DEFAULT_ADULTS", 2)
+    while True:
+        adults_input = input(
+            f"\n👥 How many adults will be staying? (Kindly press Enter for {default_adults}, up to {MAX_ADULTS_LIMIT}): "
+        ).strip() or str(default_adults)
+        if adults_input.isascii() and adults_input.isdigit():
+            adults = int(adults_input)
+            if 1 <= adults <= MAX_ADULTS_LIMIT:
+                break
+        print(f"   Could you please enter a whole number between 1 and {MAX_ADULTS_LIMIT}? 😊")
+
+    # --- Currency ---
+    default_curr = os.getenv("DEFAULT_CURRENCY", "INR").strip().upper()
+    if not is_valid_code(default_curr):
+        default_curr = "INR"
+
+    while True:
+        currency = input(
+            f"\n💱 Which currency would you prefer for viewing prices?\n"
+            f"   (Kindly press Enter for {default_curr}, or type a 3-letter code like USD, EUR, AED): "
+        ).strip().upper() or default_curr
+        if is_valid_code(currency):
+            break
+        print("   Currency codes should be exactly 3 standard letters (e.g., INR, USD, EUR). 😊 Could you please try again?")
+
+    # --- Star rating ---
+    while True:
+        print("\n⭐ May we ask your minimum star rating preference? We'll include that rating and above:")
+        print("     1 - 1 Star  and above")
+        print("     2 - 2 Stars and above")
+        print("     3 - 3 Stars and above")
+        print("     4 - 4 Stars and above")
+        print("     5 - 5 Stars only")
+        print("     (Or kindly press Enter to skip)")
+        star_input = input("\n   Please enter your choice: ").strip()
+
+        if not star_input:
+            min_star = None
+            only_exact_star = False
+            break
+        if star_input.isascii() and star_input.isdigit() and 1 <= int(star_input) <= 5:
+            min_star = int(star_input)
+            only_exact_star = (min_star == 5)
+            label = f"{min_star} Star{'s' if min_star != 1 else ''} and above" if not only_exact_star else "5 Stars only"
+            print(f"   Wonderful! We'll filter for {label}. 😊")
+            break
+        print(f"   We're sorry, '{star_input}' isn't a valid option. 😊 Please enter a number from 1 to 5, or press Enter to skip.")
+
+    # --- Food preference ---
+    while True:
+        food_input = input(
+            "\n🍽️  Do you have any dietary or food preference we should look out for?\n"
+            "   (You may type any preference like vegetarian, non-vegetarian, halal, vegan, jain — or press Enter to skip): "
+        ).strip()
+        if not food_input:
+            food_preference = None
+            break
+        if is_valid_dietary_pref(food_input):
+            food_preference = food_input
+            print(f"   Great choice! We'll look for hotels with '{food_preference}' options. 😊")
+            break
+        print("   Hmm, that doesn't look like a valid dietary preference. 😊 Please use letters only (e.g., vegetarian, halal, vegan) or press Enter to skip.")
+
+    print("\n✨ Thank you so much! Searching for the best hotels for you, please hold on...\n")
     run_hotel_agent(
-        location_query="Bengaluru",
-        check_in_date="2026-11-15",
-        check_out_date="2026-11-17",
-        adults=2,
-        currency="INR",
-        star_rating=[4, 5],
-        food_preference="veg"
+        location_query=location_query,
+        check_in_date=check_in_date,
+        check_out_date=check_out_date,
+        adults=adults,
+        currency=currency,
+        min_star=min_star,
+        only_exact_star=only_exact_star,
+        food_preference=food_preference
     )
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (KeyboardInterrupt, EOFError):
+        print("\n\n👋 Thank you for visiting the Hotel Search Agent! Have a wonderful day! 😊")
+        sys.exit(0)
