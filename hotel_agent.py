@@ -42,6 +42,27 @@ MAX_ADULTS_LIMIT          = _env_int("MAX_ADULTS_LIMIT", 20)
 _client = None
 
 
+def is_valid_code(code: str) -> bool:
+    """Validates standard 3-letter ASCII ISO currency codes (A-Z only)."""
+    return len(code) == 3 and code.isascii() and code.isalpha()
+
+
+def is_valid_location(text: str) -> bool:
+    """Requires at least 2 letters and allows letters, digits, spaces, and common city punctuation."""
+    if not text or len(text) > 100:
+        return False
+    letter_count = sum(1 for c in text if c.isalpha())
+    return letter_count >= 2 and bool(re.match(r"^[\w\s\-,.'()&/]+$", text))
+
+
+def is_valid_dietary_pref(text: str) -> bool:
+    """Requires at least 2 letters and only letters, spaces, or hyphens for food preferences."""
+    if not text or len(text) > 40:
+        return False
+    letter_count = sum(1 for c in text if c.isalpha())
+    return letter_count >= 2 and bool(re.match(r"^[A-Za-z\s\-]+$", text))
+
+
 def get_serpapi_client() -> serpapi.Client:
     """Lazily initializes and returns the SerpApi client without import-time side effects."""
     global _client
