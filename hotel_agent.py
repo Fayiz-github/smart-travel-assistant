@@ -251,27 +251,19 @@ def filter_by_food_preference(
 
 
 def group_into_tiers(hotels: list[dict]) -> dict[str, list[dict]]:
-    """
-    Groups hotels into price tiers relative to the lowest nightly price:
-    - Cheap Tier:   Up to 20% more than the lowest price
-    - Budget Tier:  Between 75% and 130% of the median price
-    - Premium Tier: More than 130% of the median price
-    """
+    """Groups hotels into price tiers relative to the median nightly price, with a percentile fallback."""
     if not hotels:
         return {}
 
     sorted_hotels = sorted(hotels, key=lambda x: x["price"])
     unique_prices = sorted({h["price"] for h in sorted_hotels})
 
-    # If fewer than 3 distinct prices, 3 tiers cannot meaningfully exist
     if len(unique_prices) <= 2:
         return {"Available Hotels": sorted_hotels}
 
-    middle_index = len(sorted_hotels) // 2
-    median_price = sorted_hotels[middle_index]["price"]
-
-    cheap_cutoff  = median_price * 0.75
-    budget_cutoff = median_price * 1.30
+    median_price  = sorted_hotels[len(sorted_hotels) // 2]["price"]
+    cheap_cutoff  = median_price * CHEAP_MEDIAN_FACTOR
+    budget_cutoff = median_price * BUDGET_MEDIAN_FACTOR
 
     tiers = {"Cheap Tier": [], "Budget Tier": [], "Premium Tier": []}
     for h in sorted_hotels:
@@ -283,7 +275,6 @@ def group_into_tiers(hotels: list[dict]) -> dict[str, list[dict]]:
         else:
             tiers["Premium Tier"].append(h)
 
-    # Fallback: if any tier is empty, split by unique price thirds instead
     if not all(tiers.values()):
         u_len         = len(unique_prices)
         cheap_cutoff  = unique_prices[max(0, (u_len // 3) - 1)]
@@ -300,7 +291,6 @@ def group_into_tiers(hotels: list[dict]) -> dict[str, list[dict]]:
                 tiers["Premium Tier"].append(h)
 
     return tiers
-
 
 
 def format_hotel_summary(hotel: dict, currency: str = "INR") -> str:
