@@ -9,12 +9,33 @@ from dotenv import load_dotenv
 if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-# --- CONFIGURATION ---
-MIN_SAFE_LAYOVER_MINS    = 60       # Warn if connection is under 1 hour
-MAX_COMFORT_LAYOVER_MINS = 360      # Warn if connection is over 6 hours
-SIGNIFICANT_SAVINGS_RATIO = 0.85   # Alert if adjacent day is >= 15% cheaper
-
 load_dotenv()
+
+
+def _env_int(key: str, default: int) -> int:
+    try:
+        return int(os.getenv(key, str(default)))
+    except (ValueError, TypeError):
+        return default
+
+
+def _env_float(key: str, default: float) -> float:
+    try:
+        val = float(os.getenv(key, str(default)))
+        return val if math.isfinite(val) else default
+    except (ValueError, TypeError):
+        return default
+
+
+# --- DYNAMIC CONFIGURATION (Safely parsed from .env) ---
+MIN_SAFE_LAYOVER_MINS     = _env_int("MIN_SAFE_LAYOVER_MINS", 60)
+MAX_COMFORT_LAYOVER_MINS  = _env_int("MAX_COMFORT_LAYOVER_MINS", 360)
+SIGNIFICANT_SAVINGS_RATIO = _env_float("SIGNIFICANT_SAVINGS_RATIO", 0.85)
+CHEAP_TIER_MULTIPLIER     = _env_float("FLIGHT_CHEAP_MULTIPLIER", 1.20)
+BUDGET_TIER_MULTIPLIER    = _env_float("FLIGHT_BUDGET_MULTIPLIER", 1.40)
+MAX_DISPLAY_PER_TIER      = _env_int("MAX_DISPLAY_PER_TIER", 3)
+MAX_ADVANCE_DAYS          = _env_int("MAX_ADVANCE_DAYS", 330)
+MAX_EXPLORE_AIRPORTS      = _env_int("MAX_EXPLORE_AIRPORTS", 10)
 
 _client = None
 
