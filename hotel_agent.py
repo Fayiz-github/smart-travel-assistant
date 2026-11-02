@@ -295,11 +295,11 @@ def group_into_tiers(hotels: list[dict]) -> dict[str, list[dict]]:
 
 def format_hotel_summary(hotel: dict, currency: str = "INR") -> str:
     """Formats a single hotel property for display."""
-    name          = hotel.get("name", "Unknown Hotel")
-    price         = hotel.get("price")
-    price_str     = f"{price:,.0f}" if isinstance(price, (int, float)) else "N/A"
-    hotel_class   = hotel.get("hotel_class", "Unclassified")
-    property_type = hotel.get("type", "hotel").title()
+    name           = hotel.get("name", "Unknown Hotel")
+    price          = hotel.get("price")
+    price_str      = f"{price:,.0f}" if isinstance(price, (int, float)) else "N/A"
+    hotel_class    = hotel.get("hotel_class", "Unclassified")
+    property_type  = str(hotel.get("type", "hotel")).title()
     total_rate_str = hotel.get("total_rate", {}).get("lowest", "N/A")
 
     hotel_notes = evaluate_hotel_details(hotel)
