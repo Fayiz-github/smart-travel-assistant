@@ -14,23 +14,20 @@ MIN_SAFE_LAYOVER_MINS    = 60       # Warn if connection is under 1 hour
 MAX_COMFORT_LAYOVER_MINS = 360      # Warn if connection is over 6 hours
 SIGNIFICANT_SAVINGS_RATIO = 0.85   # Alert if adjacent day is >= 15% cheaper
 
-# Map airport codes to countries that commonly require transit visas or have strict rules
-TRANSIT_VISA_COUNTRIES = {
-    "DXB": "UAE (Dubai)", "AUH": "UAE (Abu Dhabi)",
-    "LHR": "United Kingdom", "LGW": "United Kingdom",
-    "JFK": "United States", "EWR": "United States", "SFO": "United States",
-    "YYZ": "Canada", "YVR": "Canada",
-    "SYD": "Australia", "MEL": "Australia"
-}
-
 load_dotenv()
 
-secret_api_key = os.getenv("SECRET_API_KEY")
-if not secret_api_key:
-    print("Error: SECRET_API_KEY is not set.")
-    exit()
+_client = None
 
-client = serpapi.Client(api_key=secret_api_key)
+
+def get_serpapi_client() -> serpapi.Client:
+    """Lazily initializes and returns the SerpApi client without import-time side effects."""
+    global _client
+    if _client is None:
+        api_key = (os.getenv("SECRET_API_KEY") or "").strip()
+        if not api_key:
+            raise RuntimeError("SECRET_API_KEY environment variable is missing or empty.")
+        _client = serpapi.Client(api_key=api_key)
+    return _client
 
 
 def evaluate_layovers(itinerary: dict) -> list[str]:
@@ -66,12 +63,7 @@ def evaluate_layovers(itinerary: dict) -> list[str]:
         if layover.get("overnight"):
             warnings.append(f"🌙 OVERNIGHT layover at {airport_code}.")
 
-        # Check for potential transit visa requirements
-        if airport_code in TRANSIT_VISA_COUNTRIES:
-            country = TRANSIT_VISA_COUNTRIES[airport_code]
-            warnings.append(
-                f"🛂 VISA CHECK: Layover in {country} ({airport_code}) — verify if a transit visa is required."
-            )
+
 
     return warnings
 
@@ -86,6 +78,7 @@ def fetch_flights(dep_id: str, arr_id: str, date_str: str, currency: str = "INR"
         "type": "2",  # One-way
         "outbound_date": date_str
     }
+    client = get_serpapi_client()
     results = client.search(params)
 
     if "error" in results:
