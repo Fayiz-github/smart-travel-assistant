@@ -153,3 +153,11 @@ All parameters can be customized via `.env` or overridden as constants:
 | `DEFAULT_ADULTS` | `2` | Default number of adults for hotel searches |
 | `MAX_ADULTS_LIMIT` | `20` | Maximum supported adults in hotel search |
 | `MAX_STAY_NIGHTS` | `30` | Maximum supported consecutive hotel stay nights |
+
+
+---
+
+### 🛡️ Process-Wide Rate Limiting & Provider Safety (`search_limits.py`)
+- **Sliding-Window Rate Limiter**: Thread-safe `ProviderRateLimiter` managing calls per minute (`SERPAPI_MAX_CALLS_PER_MINUTE`) and daily call quotas (`SERPAPI_MAX_CALLS_PER_DAY`).
+- **Quota Protection**: Throws `SearchBudgetExceeded` when rate thresholds are approached to avoid unexpected subscription billing.
+- **Flight Agent Resilience**: Integrated with 350+ valid commercial airport IATA codes (`VALID_IATA_CODES`) and an in-memory `BoundedTTLCache` (500 items, 900s TTL).
