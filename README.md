@@ -161,3 +161,12 @@ All parameters can be customized via `.env` or overridden as constants:
 - **Sliding-Window Rate Limiter**: Thread-safe `ProviderRateLimiter` managing calls per minute (`SERPAPI_MAX_CALLS_PER_MINUTE`) and daily call quotas (`SERPAPI_MAX_CALLS_PER_DAY`).
 - **Quota Protection**: Throws `SearchBudgetExceeded` when rate thresholds are approached to avoid unexpected subscription billing.
 - **Flight Agent Resilience**: Integrated with 350+ valid commercial airport IATA codes (`VALID_IATA_CODES`) and an in-memory `BoundedTTLCache` (500 items, 900s TTL).
+
+
+---
+
+### 🥗 Context-Aware Dietary Negation & Quality Engine (`hotel_agent.py`)
+- **Negation Detection**: Advanced regex `_has_negative_dietary_statement` detects negation prefixes (`not`, `no`, `non-`, `without`) and suffixes (`unavailable`, `not served`, `pork`) across hotel amenities.
+- **Strict Non-Fallback Policy**: Completely disables falling back to unverified hotels when strict dietary preferences (halal, kosher, jain, vegan, vegetarian) are specified.
+- **Name Exclusion**: Prevents hotel names from being mistaken for dietary proof to avoid false positives.
+- **Memory LRU Cache**: Protected by thread-safe `BoundedTTLCache` to reduce duplicate requests.
