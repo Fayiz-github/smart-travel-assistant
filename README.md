@@ -170,3 +170,13 @@ All parameters can be customized via `.env` or overridden as constants:
 - **Strict Non-Fallback Policy**: Completely disables falling back to unverified hotels when strict dietary preferences (halal, kosher, jain, vegan, vegetarian) are specified.
 - **Name Exclusion**: Prevents hotel names from being mistaken for dietary proof to avoid false positives.
 - **Memory LRU Cache**: Protected by thread-safe `BoundedTTLCache` to reduce duplicate requests.
+
+
+---
+
+### 🔒 Deterministic Intent Router & Safety Overrides (`intent_router.py`, `travel_scope_rules.py`)
+- **Secret Exfiltration Defense**: Intercepts requests attempting to expose `.env` secrets, API keys, or access tokens.
+- **Safety Refusals**: Blocks inquiries regarding hazardous chemicals, weapons, and concealment/smuggling requests.
+- **Airline Compliance Guidance**: Provides policy-aligned answers for baggage weight limits and ticket evasion.
+- **Emergency Travel Assistance**: Identifies lost passport/visa emergencies and routes to official diplomatic assistance.
+- **Scope Boundary Policy**: Separates generic cooking recipes from local destination food culture.
