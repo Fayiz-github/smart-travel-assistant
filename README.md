@@ -180,3 +180,13 @@ All parameters can be customized via `.env` or overridden as constants:
 - **Airline Compliance Guidance**: Provides policy-aligned answers for baggage weight limits and ticket evasion.
 - **Emergency Travel Assistance**: Identifies lost passport/visa emergencies and routes to official diplomatic assistance.
 - **Scope Boundary Policy**: Separates generic cooking recipes from local destination food culture.
+
+
+---
+
+### 🚦 Deterministic Routing & Conversational Guardrails (`routing_rules.py`, `request_guards.py`, `conversation_rules.py`)
+- **Terminal Command Interception**: Blocks pasted terminal commands (`pip`, `python -m`, `npm`, `git`, `docker`).
+- **Code & SQL Injection Blocker**: Detects pasted source code blocks and raw SQL statements (`SELECT`, `INSERT`, `DROP`).
+- **Language vs Destination Disambiguation**: Differentiates programming languages from travel destinations (e.g. Java island vs Java language; Goa vs Go).
+- **Search Confirmation Gates**: Requires affirmative user consent before triggering billable provider searches.
+- **Conversational Rules**: Handles session farewells, detail expansion requests, and conversational history recall.
