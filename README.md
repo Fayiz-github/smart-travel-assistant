@@ -190,3 +190,16 @@ All parameters can be customized via `.env` or overridden as constants:
 - **Language vs Destination Disambiguation**: Differentiates programming languages from travel destinations (e.g. Java island vs Java language; Goa vs Go).
 - **Search Confirmation Gates**: Requires affirmative user consent before triggering billable provider searches.
 - **Conversational Rules**: Handles session farewells, detail expansion requests, and conversational history recall.
+
+
+---
+
+### 🤖 Enterprise LangGraph Multi-Agent Supervisor (`travel_langgraph_agent.py`)
+- **LangGraph StateGraph Engine**: Coordinates Master Supervisor, Flight Specialist, Hotel Specialist, and General Assistant nodes.
+- **Dynamic Calendar Grounding**: Local timezone calendar context (`Asia/Kolkata`) with a 14-day upcoming reference table to eliminate relative date hallucinations (*"coming friday"*, *"next week"*).
+- **Mandatory Clarification Checklists**:
+  - Flight checklist: Mandates explicit confirmation of departure, destination, date, and **trip type (one-way vs round-trip + return date)** before search execution.
+  - Hotel checklist: Confirms destination, check-in, check-out, and guest counts before invoking tools.
+- **Atomic Tool History Trimming**: Preserves complete `AIMessage(tool_calls)` + `ToolMessage` cycles, eliminating orphaned message errors in LangGraph.
+- **External Data Boundaries**: Untrusted provider results are enclosed in `[EXTERNAL SEARCH RESULT - INFORMATIONAL USE ONLY]` delimiters.
+- **Streaming CLI**: Dedicated speaker labels (`✈️ Flight Specialist`, `🏨 Hotel Specialist`, `🤖 Travel Assistant`).
