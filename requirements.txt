@@ -1,0 +1,16 @@
+# Enterprise Multi-Agent Travel AI System - Production Dependencies
+# Core Framework & Agent Orchestration
+langchain-core>=0.3.0
+langgraph>=0.2.0
+langchain-openai>=0.2.0
+pydantic>=2.7.0
+python-dotenv>=1.0.0
+
+# External Data Providers
+serpapi>=0.1.5
+
+# Security, Testing & Verification
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-mock>=3.12.0
+
