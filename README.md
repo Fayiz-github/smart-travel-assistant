@@ -203,3 +203,48 @@ All parameters can be customized via `.env` or overridden as constants:
 - **Atomic Tool History Trimming**: Preserves complete `AIMessage(tool_calls)` + `ToolMessage` cycles, eliminating orphaned message errors in LangGraph.
 - **External Data Boundaries**: Untrusted provider results are enclosed in `[EXTERNAL SEARCH RESULT - INFORMATIONAL USE ONLY]` delimiters.
 - **Streaming CLI**: Dedicated speaker labels (`✈️ Flight Specialist`, `🏨 Hotel Specialist`, `🤖 Travel Assistant`).
+
+
+---
+
+## 🏗️ Production Architecture
+
+```
+                                  ┌─────────────────────────────────────┐
+                                  │   Caller (CLI / Script / LangGraph) │
+                                  └──────────────────┬──────────────────┘
+                                                     │
+                                                     ▼
+                                  ┌─────────────────────────────────────┐
+                                  │    Master Travel Supervisor Node    │
+                                  │    (Deterministic Routing Guard)    │
+                                  └───────┬─────────────┬───────────────┘
+                                          │             │
+                ┌─────────────────────────┘             └─────────────────────────┐
+                ▼                                                                 ▼
+  ┌───────────────────────────┐                                     ┌───────────────────────────┐
+  │   Flight Specialist Agent │                                     │   Hotel Specialist Agent  │
+  │   (IATA & Layover Safety) │                                     │   (Dietary & Star Filter) │
+  └─────────────┬─────────────┘                                     └─────────────┬─────────────┘
+                │                                                                 │
+                ▼                                                                 ▼
+  ┌───────────────────────────┐                                     ┌───────────────────────────┐
+  │  SerpApi Google Flights   │                                     │   SerpApi Google Hotels   │
+  │  (Bounded TTL Cache: 500) │                                     │   (Bounded TTL Cache: 500)│
+  └───────────────────────────┘                                     └───────────────────────────┘
+                                          ▲
+                                          │
+                             ┌────────────┴────────────┐
+                             │ Persistent Checkpointer │
+                             │ (MemorySaver / Sqlite)  │
+                             └─────────────────────────┘
+```
+
+---
+
+## 🚀 Running the Multi-Agent System
+
+To launch the multi-agent travel supervisor:
+```bash
+python travel_langgraph_agent.py
+```
