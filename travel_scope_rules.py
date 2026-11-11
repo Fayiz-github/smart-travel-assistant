@@ -154,3 +154,11 @@ def is_destination_local_service_request(
     return has_service and has_nearby_cue and has_travel_context
 
 
+def canonicalize_supervisor_route(route: str) -> str:
+    """Convert legacy intent labels to actual LangGraph node names.
+
+    `general_travel` is an intent category returned by the classifier/override
+    layer, not a graph node. It must resolve to `general_assistant`.
+    """
+    aliases = {"general_travel": "general_assistant"}
+    return aliases.get(route, route)
