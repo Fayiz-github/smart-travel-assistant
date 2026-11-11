@@ -162,3 +162,109 @@ def canonicalize_supervisor_route(route: str) -> str:
     """
     aliases = {"general_travel": "general_assistant"}
     return aliases.get(route, route)
+
+
+# ---------------------------------------------------------------------------
+# Destination information and conversation context
+# ---------------------------------------------------------------------------
+# This is a small offline destination alias catalogue, not a live geographic
+# database. It covers destinations used by the app's regression tests and can
+# be expanded without changing the LangGraph supervisor.
+_DESTINATION_CATALOG = (
+    {"name": "Yogyakarta", "aliases": ("yogyakarta", "jogja"), "country": "Indonesia", "region": "Java"},
+    {"name": "Bali", "aliases": ("bali",), "country": "Indonesia", "region": "Bali"},
+    {"name": "Jakarta", "aliases": ("jakarta",), "country": "Indonesia", "region": "Java"},
+    {"name": "Surabaya", "aliases": ("surabaya",), "country": "Indonesia", "region": "Java"},
+    {"name": "Bandung", "aliases": ("bandung",), "country": "Indonesia", "region": "Java"},
+    {"name": "Java Island", "aliases": ("java island", "island of java"), "country": "Indonesia", "region": "Java"},
+    {"name": "Turkey", "aliases": ("turkey", "tÃ¼rkiye", "turkiye"), "country": "Turkey", "region": None},
+    {"name": "Jordan", "aliases": ("jordan",), "country": "Jordan", "region": None},
+    {"name": "India", "aliases": ("india",), "country": "India", "region": None},
+    {"name": "Malaysia", "aliases": ("malaysia",), "country": "Malaysia", "region": None},
+    {"name": "Indonesia", "aliases": ("indonesia",), "country": "Indonesia", "region": None},
+    {"name": "Kuala Lumpur", "aliases": ("kuala lumpur", "kl"), "country": "Malaysia", "region": None},
+    {"name": "Penang", "aliases": ("penang",), "country": "Malaysia", "region": None},
+    {"name": "Langkawi", "aliases": ("langkawi",), "country": "Malaysia", "region": None},
+    {"name": "Singapore", "aliases": ("singapore",), "country": "Singapore", "region": None},
+    {"name": "Dubai", "aliases": ("dubai",), "country": "United Arab Emirates", "region": None},
+    {"name": "Thailand", "aliases": ("thailand",), "country": "Thailand", "region": None},
+    {"name": "Bangkok", "aliases": ("bangkok",), "country": "Thailand", "region": None},
+    {"name": "Japan", "aliases": ("japan",), "country": "Japan", "region": None},
+    {"name": "Tokyo", "aliases": ("tokyo",), "country": "Japan", "region": None},
+    {"name": "Iran", "aliases": ("iran",), "country": "Iran", "region": None},
+    {"name": "United States", "aliases": ("united states", "united states of america", "usa", "u.s.a.", "america"), "country": "United States", "region": None},
+    {"name": "New York", "aliases": ("new york",), "country": "United States", "region": None},
+    {"name": "Atlanta", "aliases": ("atlanta",), "country": "United States", "region": "Georgia"},
+    {"name": "Savannah", "aliases": ("savannah",), "country": "United States", "region": "Georgia"},
+    {"name": "Istanbul", "aliases": ("istanbul",), "country": "Turkey", "region": None},
+    {"name": "Cappadocia", "aliases": ("cappadocia",), "country": "Turkey", "region": None},
+    {"name": "Antalya", "aliases": ("antalya",), "country": "Turkey", "region": None},
+    {"name": "Tbilisi", "aliases": ("tbilisi",), "country": "Georgia", "region": None},
+    {"name": "Batumi", "aliases": ("batumi",), "country": "Georgia", "region": None},
+    {"name": "Petra", "aliases": ("petra",), "country": "Jordan", "region": None},
+    {"name": "Amman", "aliases": ("amman",), "country": "Jordan", "region": None},
+    {"name": "Wadi Rum", "aliases": ("wadi rum",), "country": "Jordan", "region": None},
+    {"name": "Kochi", "aliases": ("kochi", "cochin"), "country": "India", "region": "Kerala"},
+    {"name": "Kozhikode", "aliases": ("kozhikode", "calicut"), "country": "India", "region": "Kerala"},
+    {"name": "Bengaluru", "aliases": ("bengaluru", "bangalore"), "country": "India", "region": "Karnataka"},
+    {"name": "Delhi", "aliases": ("delhi", "new delhi"), "country": "India", "region": None},
+    {"name": "Mumbai", "aliases": ("mumbai", "bombay"), "country": "India", "region": "Maharashtra"},
+    {"name": "Goa", "aliases": ("goa",), "country": "India", "region": None},
+    {"name": "Paris", "aliases": ("paris",), "country": "France", "region": None},
+    {"name": "Nice", "aliases": ("nice",), "country": "France", "region": "French Riviera"},
+)
+
+
+def find_destination_mentions(text: str) -> list[dict[str, str | None]]:
+    """Extract known destination names in the order they appear in a message.
+
+    More specific place names win over parent regions/countries. The result is
+    deliberately small and suitable for storing in the conversation state.
+    Ambiguous names (Java and Georgia) are handled separately below.
+    """
+    value = _norm(text)
+    if not value:
+        return []
+
+    mentions: list[tuple[int, int, dict[str, str | None]]] = []
+    for item in _DESTINATION_CATALOG:
+        for alias in item["aliases"]:
+            pattern = rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])"
+            for match in re.finditer(pattern, value, re.IGNORECASE):
+                mentions.append((match.start(), -(match.end() - match.start()), {
+                    "name": item["name"],
+                    "country": item["country"],
+                    "region": item["region"],
+                }))
+
+    # Java is only recorded as a place when the wording clearly signals travel
+    # or the user explicitly identifies Java Island / Indonesia.
+    java_explicit = bool(re.search(r"\bjava\s+island\b|\bjava\s*,?\s*indonesia\b|\bindonesia\b.{0,35}\bjava\b", value))
+    java_travel = bool(re.search(r"\b(?:go|going|travel|travelling|traveling|visit|visiting|trip|holiday|vacation)\s+(?:to|in|around)\s+java\b", value))
+    if java_explicit or java_travel:
+        match = re.search(r"\bjava(?:\s+island)?\b", value)
+        if match:
+            mentions.append((match.start(), -len(match.group(0)), {
+                "name": "Java Island", "country": "Indonesia", "region": "Java"
+            }))
+
+    # Georgia needs a qualifier. Do not automatically decide whether it means
+    # the country or the U.S. state.
+    if re.search(r"\bgeorgia\b", value):
+        if re.search(r"\bgeorgia\b.{0,25}\b(?:country|caucasus|tbilisi)\b|\b(?:country|caucasus)\b.{0,25}\bgeorgia\b", value):
+            m = re.search(r"\bgeorgia\b", value)
+            mentions.append((m.start(), -7, {"name": "Georgia (country)", "country": "Georgia", "region": None}))
+        elif re.search(r"\bgeorgia\b.{0,35}\b(?:united states|u\.s\.|usa|us state|american state)\b|\b(?:united states|u\.s\.|usa|us state|american state)\b.{0,35}\bgeorgia\b", value):
+            m = re.search(r"\bgeorgia\b", value)
+            mentions.append((m.start(), -7, {"name": "Georgia (U.S. state)", "country": "United States", "region": "Georgia"}))
+
+    # Keep the most specific match at a position and deduplicate canonical names.
+    ordered: list[dict[str, str | None]] = []
+    for _, _, item in sorted(mentions, key=lambda part: (part[0], part[1])):
+        if item["name"] not in [entry["name"] for entry in ordered]:
+            ordered.append(item)
+    # If a city and its parent country were both named, keep both; that is
+    # useful for storing explicit country context. No aliases are emitted twice.
+    return ordered
+
+
