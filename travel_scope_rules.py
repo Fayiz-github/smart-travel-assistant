@@ -487,3 +487,29 @@ def update_destination_context(text: str, context: dict) -> dict:
 
     return updated
 
+
+
+def is_destination_safety_question(text: str) -> bool:
+    value = _norm(text)
+    return bool(re.search(
+        r"\b(?:is it safe|are .* safe|safe for|safety for|solo tourists?|solo travelers?|solo travellers?|crime|scams?)\b",
+        value,
+        re.IGNORECASE,
+    ))
+
+
+def is_destination_cost_comparison(text: str, destination_count: int = 0) -> bool:
+    value = _norm(text)
+    return destination_count >= 2 and bool(re.search(
+        r"\b(?:which one is cheaper|which is cheaper|which one costs less|which is less expensive|compare .* costs?|compare .* prices?)\b",
+        value,
+        re.IGNORECASE,
+    ))
+
+
+def is_itinerary_decline(text: str) -> bool:
+    return bool(re.search(
+        r"\b(?:i don't want an itinerary|i do not want an itinerary|no itinerary|don't make an itinerary|do not make an itinerary)\b",
+        _norm(text),
+        re.IGNORECASE,
+    ))
