@@ -1,16 +1,25 @@
-# Enterprise Multi-Agent Travel AI System - Production Dependencies
-# Core Framework & Agent Orchestration
-langchain-core>=0.3.0
-langgraph>=0.2.0
-langchain-openai>=0.2.0
-pydantic>=2.7.0
-python-dotenv>=1.0.0
+# Core LangChain / LangGraph orchestration
+langchain-core>=0.3.0,<2
+langgraph>=0.2.0,<2
+langchain-openai>=0.2.0,<2
+langchain-tavily>=0.2.0,<2
+langgraph-checkpoint-sqlite>=2.0.0,<4
 
-# External Data Providers
-serpapi>=0.1.5
+# Validation and environment
+pydantic>=2.7.0,<3
+python-dotenv>=1.0.0,<2
+tzdata>=2025.2
 
-# Security, Testing & Verification
+# Live travel data providers
+serpapi>=1.2.0,<2
+
+# Global offline geographic reference data
+# airportsdata provides worldwide IATA/airport/city metadata.
+airportsdata>=20261103
+pycountry>=24.6.1
+geonamescache>=3.0.2
+
+# Automated quality checks
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
 pytest-mock>=3.12.0
-
