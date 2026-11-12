@@ -1461,8 +1461,22 @@ def build_travel_supervisor_graph(checkpointer=None):
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY environment variable is missing.")
 
-    model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    llm = ChatOpenAI(model=model_name, openai_api_key=api_key, temperature=0.0, timeout=30, max_retries=3)
+    # GPT-5 nano is the default model for every LLM step in this graph.
+    # Do not send temperature=0: GPT-5 reasoning models use their supported
+    # reasoning controls instead. OPENAI_MODEL in .env may intentionally override
+    # the default, so set it to gpt-5-nano to use the requested model.
+    model_name = (os.getenv("OPENAI_MODEL") or "gpt-5-nano").strip() or "gpt-5-nano"
+    llm_kwargs = {
+        "model": model_name,
+        "api_key": api_key,
+        "timeout": 35,
+        "max_retries": 2,
+    }
+    if model_name.startswith("gpt-5"):
+        llm_kwargs["reasoning_effort"] = (
+            os.getenv("OPENAI_REASONING_EFFORT", "low").strip() or "low"
+        )
+    llm = ChatOpenAI(**llm_kwargs)
 
     flight_llm  = llm.bind_tools(FLIGHT_TOOLS)
     hotel_llm   = llm.bind_tools(HOTEL_TOOLS)
