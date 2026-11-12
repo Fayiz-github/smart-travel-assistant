@@ -34,7 +34,7 @@ An AI-powered travel assistant for searching flights and hotels using Google Fli
   - 🕒 Lists check-in and check-out policies.
 
 ### 🛡️ Built-in Input Validation & Safety
-- **Airport Codes**: Strict 3-letter IATA alphabetic validation (`is_valid_code`). Prevents identical departure and arrival codes.
+- **Airport Resolution**: Uses a global airport directory for IATA validation and exact city/airport-name resolution. Multi-airport cities are sent as comma-separated airport codes where supported; ambiguous same-name cities require country clarification.
 - **Date Guardrails**: Validates `YYYY-MM-DD` calendar dates, prevents past dates, ensures return date > departure date, and respects the 330-day airline/hotel booking window (`MAX_ADVANCE_DAYS`).
 - **Hotel Stays**: Validates check-out > check-in and caps bookings to reasonable stay durations (1 to 30 nights).
 - **Guest & Budget Constraints**: Enforces positive guest counts (1–20 adults) and positive finite numbers for budgets.
@@ -46,19 +46,38 @@ An AI-powered travel assistant for searching flights and hotels using Google Fli
 ## 🚀 Getting Started
 
 ### 1. Install Dependencies
-```bash
-pip install serpapi python-dotenv
+Use the complete dependency manifest from the project root:
+
+```powershell
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
+The global resolver uses `airportsdata`, `geonamescache` and `pycountry`. It resolves cities beyond the fixed legacy catalogue, supports multi-airport cities, and provides a continent-diverse default airport set for budget exploration.
+
 ### 2. Configure Environment Variables
-Create a `.env` file in the project root:
+Copy the example file and add your own credentials in the project root:
+```powershell
+if (-not (Test-Path .env)) { Copy-Item .env.example .env } else { Write-Host ".env already exists; keeping it unchanged." }
+```
+
+Then edit `.env` only if you need to add missing variables. Do not overwrite your existing API keys or traveler settings:
 ```env
-# Required: SerpApi API key (get one at serpapi.com)
+# Required for flight and hotel searches
 SECRET_API_KEY=your_serpapi_key_here
 
-# Optional defaults
-DEFAULT_CURRENCY=INR
-EXPLORE_AIRPORTS=BLR,DEL,DXB,SIN
+# Required for the LangGraph assistant
+OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-5-nano
+
+# Required for live travel-condition research and risk monitoring
+TAVILY_API_KEY=your_tavily_api_key_here
+
+# Optional user/application preferences (never infer passport nationality)
+DEFAULT_CURRENCY=USD
+APP_TIMEZONE=Asia/Kolkata
+TRAVEL_USER_ID=local-user
+TRAVEL_RISK_DB_PATH=travel_risk.db
 ```
 
 ### 3. Run Interactively
@@ -248,3 +267,17 @@ To launch the multi-agent travel supervisor:
 ```bash
 python travel_langgraph_agent.py
 ```
+
+---
+
+## 🌍 Global Destination Resolution
+
+The application is not restricted to a fixed city or country list. `global_geography.py` uses:
+
+- `airportsdata` for worldwide IATA airport codes, airport names, city names, country codes and airport metadata.
+- `geonamescache` for a broader offline city gazetteer, including cities without IATA airports (configured with a 5,000 population threshold).
+- `pycountry` for ISO country and currency names/codes.
+- Exact-match resolution only. If a city name maps to multiple countries, the assistant asks which country rather than guessing.
+- Multi-airport cities are resolved to comma-separated IATA airport codes supported by SerpApi Google Flights.
+
+The geographic datasets are offline reference data, not a live geocoder. `airportsdata` covers operational airport locations with IATA codes; `geonamescache` broadens city recognition but uses a population threshold and does not cover every village, resort or transport hub. A destination without a matching airport may still be researched or used for hotel search, but flight search needs a supported airport/location ID. Ambiguous place names must be disambiguated. The datasets should be updated periodically. Use Python 3.12 or newer for the current `airportsdata` release.
