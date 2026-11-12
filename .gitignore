@@ -1,26 +1,20 @@
-# Files not included in this repo
-flight_search.py
-flight_search_pretty.py
-
-
-# Environment variables - keep secrets safe
+# Secrets and local configuration
 .env
+.env.*
+!.env.example
 
-# Virtual environment
-venv/
-.venv/
-env/
+# Persistent local databases / checkpoints
+*.db
+*.sqlite
+*.sqlite3
 
-# Python cache
+# Python build/test artifacts
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
+.pytest_cache/
+.venv/
+venv/
 
-# IDEs
-.vscode/
-.idea/
-
-# OS files
-.DS_Store
-Thumbs.db
+# Local notifications and logs
+risk_notifications.jsonl
+*.log
