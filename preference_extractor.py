@@ -222,14 +222,223 @@ def is_trip_detail_message(user_message: str) -> bool:
     return any(re.search(pattern, value, re.IGNORECASE) for pattern in patterns)
 
 
-
 def update_preference_profile(existing: dict[str, Any] | None, user_message: str) -> dict[str, Any]:
-    """Return a merged profile using only explicit evidence in user_message."""
+    """Return a merged profile using only explicit evidence in ``user_message``."""
     profile = deepcopy(DEFAULT_PREFERENCE_PROFILE)
     if isinstance(existing, dict):
         for key, value in existing.items():
-            if key in profile:
+            if key not in profile:
+                continue
+            default_value = profile[key]
+            # None is an intentional empty/default value for optional fields
+            # (e.g. cabin_class, traveler_count, budget_amount). Accept a
+            # previously extracted non-None value so it survives later turns.
+            if default_value is None or isinstance(value, type(default_value)):
                 profile[key] = deepcopy(value)
+        # Keep forward-compatible fields that may be stored by newer releases.
+        for key, value in existing.items():
+            if key not in profile:
+                profile[key] = deepcopy(value)
+
+    value = _normalise(user_message)
+    if not value:
+        return profile
+
+    # Explicitly cued trip dates are stored separately from generic dates so a
+    # year in another context (or a date mentioned in a side question) is not
+    # silently assigned to the itinerary.
+    departure = _extract_cued_date(value, r"\b(?:depart(?:ure)?|leave|leaving|outbound|start(?:ing)?)\b(?:\s+on)?")
+    if departure:
+        profile["departure_date"] = departure
+    returning = _extract_cued_date(value, r"\b(?:return(?:ing)?|come\s+back|coming\s+back|back\s+on)\b(?:\s+on)?")
+    if returning:
+        profile["return_date"] = returning
+
+    # Budget: optional, and the state distinguishes not mentioned from a refusal.
+    if _has_any(value, (
+        r"\bno\s+(?:fixed|specific|set)\s+budget\b", r"\bbudget\s+is\s+flexible\b",
+        r"\bflexible\s+(?:on|with|about)\s+(?:the\s+)?budget\b", r"\bprice\s+isn't\s+an\s+issue\b",
+        r"\bdon't\s+worry\s+about\s+(?:the\s+)?price\b", r"\bany\s+price\s+is\s+fine\b",
+        r"\bregardless\s+of\s+(?:the\s+)?price\b",
+    )):
+        profile["budget_status"] = "flexible"
+        profile["budget_amount"] = None
+        profile["budget_currency"] = None
+        profile["budget_scope"] = None
+        profile["price_sensitivity"] = "flexible"
+    elif _has_any(value, (
+        r"\bnot\s+decided\s+(?:on\s+)?(?:my\s+)?budget\b", r"\bhaven't\s+decided\s+(?:on\s+)?(?:my\s+)?budget\b",
+        r"\bnot\s+sure\s+(?:about|of)\s+(?:my\s+)?budget\b", r"\bdon't\s+know\s+my\s+budget\b",
+    )):
+        profile["budget_status"] = "undecided"
+        profile["budget_amount"] = None
+        profile["budget_currency"] = None
+        profile["budget_scope"] = None
+    elif _has_any(value, (
+        r"\bprefer\s+not\s+to\s+(?:say|share|disclose)\s+(?:my\s+)?budget\b",
+        r"\bdon't\s+want\s+to\s+(?:share|disclose)\s+(?:my\s+)?budget\b",
+        r"\bnot\s+comfortable\s+sharing\s+(?:my\s+)?budget\b",
+        r"\b(?:don't|do not|dont)\s+ask\s+me\s+(?:(?:about|for)\s+)?(?:a\s+)?budget\b",
+        r"\bno\s+budget\s+questions?\b",
+    )):
+        profile["budget_status"] = "declined"
+        profile["budget_amount"] = None
+        profile["budget_currency"] = None
+        profile["budget_scope"] = None
+    else:
+        amount, currency = _extract_budget(user_message)
+        if amount is not None:
+            profile["budget_status"] = "provided"
+            profile["budget_amount"] = amount
+            profile["budget_currency"] = currency
+            if _has_any(value, (r"\bper\s+person\b", r"\beach\b", r"\beach\s+travell?er\b")):
+                profile["budget_scope"] = "per_person"
+            elif _has_any(value, (r"\bper\s+day\b", r"\bdaily\b")):
+                profile["budget_scope"] = "per_day"
+            elif _has_any(value, (r"\btotal\b", r"\bfor\s+the\s+whole\s+trip\b", r"\ball\s+in\b")):
+                profile["budget_scope"] = "total"
+            else:
+                profile["budget_scope"] = "unspecified"
+
+    # Price sensitivity is distinct from the numeric budget.
+    if _has_any(value, (r"\bcheapest\b", r"\blowest\s+price\b", r"\bbudget[- ]friendly\b", r"\bcheap(?:est)?\b", r"\bkeep\s+costs?\s+low\b")):
+        profile["price_sensitivity"] = "budget"
+    elif _has_any(value, (r"\bbest\s+value\b", r"\breasonable\s+price\b", r"\bvalue\s+for\s+money\b", r"\bmid[- ]range\b")):
+        profile["price_sensitivity"] = "value"
+    elif _has_any(value, (r"\bluxury\b", r"\bpremium\b", r"\bhigh[- ]end\b", r"\btop[- ]class\b")):
+        profile["price_sensitivity"] = "premium"
+
+    # Passport nationality is personal information and must only be stored when
+    # the user explicitly ties a country/demonym to a passport. Never infer it
+    # from origin, residence, language, or government-source preferences.
+    passport_patterns = (
+        ("India", r"\b(?:indian\s+passport(?:s)?|passport\s+holders?\s+(?:are\s+)?indian|passport\s+from\s+india)\b"),
+        ("United Kingdom", r"\b(?:british\s+passport(?:s)?|uk\s+passport(?:s)?|passport\s+from\s+(?:the\s+)?(?:uk|united kingdom))\b"),
+        ("United States", r"\b(?:american\s+passport(?:s)?|us\s+passport(?:s)?|passport\s+from\s+(?:the\s+)?(?:us|united states))\b"),
+        ("Ireland", r"\b(?:irish\s+passport(?:s)?|passport\s+from\s+ireland)\b"),
+        ("Australia", r"\b(?:australian\s+passport(?:s)?|passport\s+from\s+australia)\b"),
+        ("Canada", r"\b(?:canadian\s+passport(?:s)?|passport\s+from\s+canada)\b"),
+        ("Germany", r"\b(?:german\s+passport(?:s)?|passport\s+from\s+germany)\b"),
+        ("France", r"\b(?:french\s+passport(?:s)?|passport\s+from\s+france)\b"),
+        ("United Arab Emirates", r"\b(?:emirati\s+passport(?:s)?|uae\s+passport(?:s)?|passport\s+from\s+(?:the\s+)?uae)\b"),
+        ("Singapore", r"\b(?:singaporean\s+passport(?:s)?|passport\s+from\s+singapore)\b"),
+        ("Malaysia", r"\b(?:malaysian\s+passport(?:s)?|passport\s+from\s+malaysia)\b"),
+    )
+    for country, pattern in passport_patterns:
+        if re.search(pattern, value, re.IGNORECASE):
+            profile["passport_country"] = country
+            break
+
+    # Travel purpose is optional. If not supplied, downstream research may
+    # provide clearly labelled general/tourism guidance without assuming it.
+    purpose_patterns = (
+        ("tourism", r"\b(?:tourism|tourist|holiday|vacation|leisure)\b"),
+        ("business", r"\b(?:business\s+trip|business\s+travel|attend(?:ing)?\s+(?:a\s+)?conference|work\s+meeting)\b"),
+        ("transit", r"\btransit(?:ing)?\b"),
+        ("study", r"\b(?:study|student|education)\b"),
+        ("work", r"\b(?:employment|work\s+visa|taking\s+up\s+work)\b"),
+    )
+    for purpose, pattern in purpose_patterns:
+        if re.search(pattern, value, re.IGNORECASE):
+            profile["travel_purpose"] = purpose
+            break
+
+    # Traveller count: only record a count when the message explicitly labels
+    # it as a party/traveller/person count (never mistake dates or money for it).
+    number_words = {
+        "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+    }
+    party_match = re.search(
+        r"\b(?:there\s+are|we\s+are|party\s+of|family\s+of|travell?ing\s+with)?\s*"
+        r"(?P<count>\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*"
+        r"(?:travell?ers?|people|persons?|passengers?|adults?|guests?)\b",
+        value,
+        re.IGNORECASE,
+    )
+    if party_match:
+        raw_count = party_match.group("count").lower()
+        try:
+            count = int(raw_count)
+        except ValueError:
+            count = number_words.get(raw_count)
+        if count is not None and 1 <= count <= 50:
+            profile["traveler_count"] = count
+
+    # Cabin class: the latest explicit class mention wins.
+    cabin_matches = list(re.finditer(r"\b(first\s+class|business\s+class|premium\s+economy|economy(?:\s+class)?)\b", value))
+    if cabin_matches:
+        cabin = cabin_matches[-1].group(1).replace(" ", "_")
+        profile["cabin_class"] = {
+            "first_class": "first", "business_class": "business",
+            "premium_economy": "premium_economy", "economy": "economy", "economy_class": "economy",
+        }[cabin]
+
+    # Accommodation preference.
+    accommodation_patterns = (
+        ("hotel", r"\bhotels?\b"),
+        ("hostel", r"\bhostels?\b"),
+        ("apartment", r"\bapartments?\b|\bserviced\s+apartments?\b"),
+        ("resort", r"\bresorts?\b"),
+        ("luxury", r"\bluxury\s+(?:hotels?|accommodation|stay)\b"),
+        ("budget", r"\bbudget\s+(?:hotels?|accommodation|stay)\b"),
+        ("mid_range", r"\bmid[- ]range\s+(?:hotels?|accommodation|stay)\b"),
+    )
+    for style, pattern in accommodation_patterns:
+        if re.search(pattern, value, re.IGNORECASE):
+            profile["accommodation_style"] = style
+
+    # Interests are additive; only explicit topic words are recorded.
+    interest_patterns = {
+        "sightseeing": r"\b(?:sightseeing|landmarks?|attractions?|museums?)\b",
+        "food": r"\b(?:food|foodie|local cuisine|restaurants?|street food)\b",
+        "shopping": r"\bshopping\b|\bmarkets?\b",
+        "nature": r"\b(?:nature|hiking|mountains?|waterfalls?|wildlife|parks?)\b",
+        "beaches": r"\b(?:beaches?|islands?|snorkell?ing|diving)\b",
+        "culture": r"\b(?:culture|cultural|heritage|temples?|history)\b",
+        "nightlife": r"\bnightlife\b|\bclubs?\b|\bbars?\b",
+        "family": r"\b(?:family[- ]friendly|kids?|children)\b",
+        "relaxation": r"\b(?:relax|relaxation|spa|wellness)\b",
+        "adventure": r"\b(?:adventure|adrenaline|zipline|rafting)\b",
+    }
+    interests = set(profile.get("interests") or [])
+    for interest, pattern in interest_patterns.items():
+        if re.search(pattern, value, re.IGNORECASE):
+            interests.add(interest)
+    profile["interests"] = sorted(interests)
+
+    # Explicit constraints/preferences; avoid interpreting ordinary mentions as constraints.
+    constraints = set(profile.get("constraints") or [])
+    if _has_any(value, (r"\b(?:layovers?|stopovers?|connections?)\s+(?:are\s+)?fine\b", r"\bi\s+don't\s+mind\s+(?:a\s+)?(?:layover|stopover|connection)s?\b")):
+        constraints.discard("no_layovers")
+        constraints.discard("direct_flights_only")
+    if _has_any(value, (r"\bwindow\s+seat\s+instead\b", r"\bprefer\s+a?\s*window\s+seat\b")):
+        constraints.discard("aisle_seat")
+    if _has_any(value, (r"\baisle\s+seat\s+instead\b", r"\bprefer\s+an?\s*aisle\s+seat\b")):
+        constraints.discard("window_seat")
+    constraint_patterns = {
+        "direct_flights_only": r"\b(?:direct|non[- ]stop)\s+flights?\s+only\b|\bonly\s+direct\s+flights?\b",
+        "no_layovers": r"\bno\s+(?:layovers?|stopovers?|connections?)\b",
+        "avoid_red_eye": r"\bno\s+red[- ]eye\b|\bavoid\s+red[- ]eye\b",
+        "aisle_seat": r"\baisle\s+seat\b",
+        "window_seat": r"\bwindow\s+seat\b",
+        "wheelchair_access": r"\bwheelchair\s+access(?:ible)?\b|\baccessibility\s+needs?\b",
+        "non_smoking": r"\bnon[- ]smoking\b|\bno\s+smoking\b",
+        "family_friendly": r"\bfamily[- ]friendly\b",
+        "no_booking_without_confirmation": r"\b(?:don't|do not|never)\s+book\b.{0,50}\b(?:without|unless)\b.{0,30}\b(?:ask|confirm|approval)\b",
+    }
+    for constraint, pattern in constraint_patterns.items():
+        if re.search(pattern, value, re.IGNORECASE):
+            constraints.add(constraint)
+    profile["constraints"] = sorted(constraints)
+
+    if _has_any(value, (
+        r"\b(?:don't|do not|never)\s+book\b.{0,60}\bwithout\s+(?:asking|my\s+)?(?:me\s+)?(?:first|confirmation|approval)\b",
+        r"\bask\s+me\s+before\s+booking\b", r"\bconfirm\s+with\s+me\s+before\s+booking\b",
+    )):
+        profile["booking_preference"] = "explicit_confirmation_required"
+
+    _update_service_search_preferences(profile, value)
     return profile
 
 
