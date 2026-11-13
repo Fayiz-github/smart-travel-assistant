@@ -36,6 +36,11 @@ except Exception:
 logger = logging.getLogger("travel_system.hotel_agent")
 from search_limits import SERPAPI_LIMITER, SearchBudgetExceeded
 
+try:
+    from global_geography import supported_currency_codes
+except ImportError:
+    supported_currency_codes = None
+
 SUPPORTED_CURRENCIES = {
     "INR", "USD", "EUR", "GBP", "MYR", "SGD", "THB", "AED", "CAD", "AUD",
     "JPY", "CHF", "CNY", "HKD", "KRW", "IDR", "PHP", "VND", "LKR", "NPR",
@@ -45,7 +50,17 @@ SUPPORTED_CURRENCIES = {
 }
 
 def is_supported_currency(value: str) -> bool:
-    return isinstance(value, str) and value.strip().upper() in SUPPORTED_CURRENCIES
+    if not isinstance(value, str):
+        return False
+    code = value.strip().upper()
+    if supported_currency_codes is not None:
+        try:
+            dynamic = supported_currency_codes()
+            if dynamic:
+                return code in dynamic
+        except Exception:
+            pass
+    return code in SUPPORTED_CURRENCIES
 
 
 
@@ -56,7 +71,7 @@ def is_supported_currency(value: str) -> bool:
 def _env_int(key: str, default: int, min_val: int | None = None, max_val: int | None = None) -> int:
     try:
         val = int(os.getenv(key, str(default)))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         logger.warning("Config '%s' invalid; using default %d.", key, default)
         return default
     if min_val is not None and val < min_val:
@@ -73,7 +88,7 @@ def _env_float(key: str, default: float, min_val: float | None = None, max_val: 
         val = float(os.getenv(key, str(default)))
         if not math.isfinite(val):
             raise ValueError("non-finite")
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         logger.warning("Config '%s' invalid; using default %f.", key, default)
         return default
     if min_val is not None and val < min_val:
@@ -215,7 +230,7 @@ def _safe_rating(value: Any) -> float | None:
         f = float(value)
         if math.isfinite(f) and 0.0 <= f <= 5.0:
             return round(f, 2)
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         pass
     return None
 
@@ -227,7 +242,7 @@ def _safe_reviews(value: Any) -> int | None:
     try:
         i = int(float(value))
         return i if i >= 0 else None
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         return None
 
 
@@ -393,12 +408,12 @@ def _validate_hotel_request(
 
     try:
         in_dt = datetime.strptime(check_in_date.strip(), "%Y-%m-%d").date()
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         return f"Invalid check_in_date format '{check_in_date}'. Expected YYYY-MM-DD."
 
     try:
         out_dt = datetime.strptime(check_out_date.strip(), "%Y-%m-%d").date()
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         return f"Invalid check_out_date format '{check_out_date}'. Expected YYYY-MM-DD."
 
     today_local = datetime.now(APP_TIMEZONE).date()
@@ -563,7 +578,7 @@ def _extract_star_class(hotel: dict) -> int | None:
             val = int(star_class)
             if 1 <= val <= 5:
                 return val
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, AttributeError):
             pass
 
     hc_str = str(hotel.get("hotel_class", ""))
