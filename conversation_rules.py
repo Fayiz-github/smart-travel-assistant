@@ -8,6 +8,17 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
+try:
+    from global_geography import (
+        country_aliases as _global_country_aliases,
+        normalize_geo_text as _geo_normalize,
+        canonical_country as _canonical_country,
+    )
+except ImportError:
+    _global_country_aliases = None
+    _canonical_country = lambda value: None
+    _geo_normalize = lambda value: " ".join(str(value or "").lower().split())
+
 
 def _norm(text: str) -> str:
     return " ".join((text or "").lower().replace("’", "'").split()).strip()
@@ -72,7 +83,7 @@ def is_contextual_detail_followup(text: str) -> bool:
 # only for ambiguity detection, never to infer a route direction.
 _COUNTRY_ALIASES = {
     "iran": ("iran",),
-    "united states": ("united states", "united states of america", "usa", "u.s.a.", "u.s.", "america", "us"),
+    "united states": ("united states", "united states of america", "usa", "u.s.a.", "u.s."),
     "india": ("india",),
     "united kingdom": ("united kingdom", "uk", "u.k.", "britain", "great britain"),
     "uae": ("uae", "united arab emirates", "emirates"),
@@ -86,7 +97,7 @@ _COUNTRY_ALIASES = {
     "bahrain": ("bahrain",), "yemen": ("yemen",), "jordan": ("jordan",),
     "egypt": ("egypt",), "morocco": ("morocco",), "kenya": ("kenya",),
     "south africa": ("south africa",), "nigeria": ("nigeria",),
-    "china": ("china",), "japan": ("japan",), "south korea": ("south korea", "korea"),
+    "china": ("china",), "japan": ("japan",), "south korea": ("south korea", "republic of korea"),
     "north korea": ("north korea",), "singapore": ("singapore",),
     "malaysia": ("malaysia",), "indonesia": ("indonesia",),
     "thailand": ("thailand",), "vietnam": ("vietnam",),
@@ -111,26 +122,65 @@ _COUNTRY_LOOKUP = {
     for alias in aliases
 }
 
+# ISO country names are loaded dynamically when pycountry is installed. This
+# removes the previous 50-country ceiling while preserving familiar aliases.
+if _global_country_aliases is not None:
+    try:
+        for alias, canonical in _global_country_aliases().items():
+            if alias:
+                _COUNTRY_LOOKUP.setdefault(alias, canonical)
+    except Exception:
+        pass
+
+_COUNTRY_LOOKUP_NORMALIZED = {
+    _geo_normalize(alias): canonical
+    for alias, canonical in _COUNTRY_LOOKUP.items()
+    if _geo_normalize(alias)
+}
+
 
 def country_mentions(text: str) -> set[str]:
-    value = _norm(text)
+    value = _geo_normalize(text)
     found: set[str] = set()
     # Match longest aliases first so "United States" is not split/duplicated.
-    for alias in sorted(_COUNTRY_LOOKUP, key=len, reverse=True):
+    for alias in sorted(_COUNTRY_LOOKUP_NORMALIZED, key=len, reverse=True):
         pattern = rf"(?<![a-z]){re.escape(alias)}(?![a-z])"
         if re.search(pattern, value):
-            found.add(_COUNTRY_LOOKUP[alias])
+            raw_canonical = _COUNTRY_LOOKUP_NORMALIZED[alias]
+            found.add(_canonical_country(raw_canonical) or raw_canonical.title())
+    # Georgia is also a U.S. state. Keep it unresolved unless the user provides
+    # a country/Caucasus/Tbilisi qualifier; the destination resolver handles it.
+    # Recognize the short "US" alias only in an explicit travel/route context;
+    # treating every standalone "us" as the country would misread ordinary prose.
+    if re.search(
+        r"\b(?:travel|travelling|traveling|trip|flight|fly|visit|visiting|visa|border)\b"
+        r".{0,45}\b(?:to|from|in|for)\s+us\b|\bfrom\s+us\s+to\b",
+        value,
+    ):
+        found.add("United States")
+    if "Georgia" in found and not re.search(
+        r"\b(?:georgia\s+(?:country|the country)|country\s+of\s+georgia|caucasus|tbilisi)\b",
+        value,
+    ):
+        found.discard("Georgia")
     return found
 
 
 def country_pair_names(text: str) -> tuple[str, str] | None:
     """Return the first two distinct country names in the order the user wrote them."""
-    value = _norm(text)
+    value = _geo_normalize(text)
     occurrences: list[tuple[int, str]] = []
-    for alias, canonical in _COUNTRY_LOOKUP.items():
+    for alias, canonical in _COUNTRY_LOOKUP_NORMALIZED.items():
         pattern = rf"(?<![a-z]){re.escape(alias)}(?![a-z])"
         for match in re.finditer(pattern, value):
-            occurrences.append((match.start(), canonical))
+            canonical_name = _canonical_country(canonical) or canonical.title()
+            occurrences.append((match.start(), canonical_name))
+    if "United States" in country_mentions(text) and not any(
+        canonical == "United States" for _, canonical in occurrences
+    ):
+        us_match = re.search(r"(?<![a-z])us(?![a-z])", value)
+        if us_match:
+            occurrences.append((us_match.start(), "United States"))
     ordered: list[str] = []
     for _, canonical in sorted(occurrences, key=lambda item: item[0]):
         if canonical not in ordered:
