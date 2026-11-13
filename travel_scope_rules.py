@@ -1,4 +1,4 @@
-﻿"""Deterministic travel-only scope policy for the Travel AI application.
+"""Deterministic travel-only scope policy for the Travel AI application.
 
 This module has no LangChain dependency so the scope checks can be tested
 without calling an LLM or any travel provider.
@@ -6,12 +6,20 @@ without calling an LLM or any travel provider.
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from intent_router import is_destination_food_request
 
+try:
+    from global_geography import find_city_mentions, country_aliases as _global_country_aliases, normalize_geo_text
+except ImportError:  # Keep scope checks usable when optional geo datasets are absent.
+    find_city_mentions = None
+    _global_country_aliases = None
+    normalize_geo_text = lambda value: " ".join(str(value or "").lower().split())
+
 
 def _norm(text: str) -> str:
-    return " ".join((text or "").lower().replace("â€™", "'").split()).strip()
+    return " ".join((text or "").lower().replace("’", "'").replace("â€™", "'").split()).strip()
 
 
 _RECIPE_WORDS = r"(?:recipe|recipes|recipie|recipies|recipee|recipees)"
@@ -177,7 +185,7 @@ _DESTINATION_CATALOG = (
     {"name": "Surabaya", "aliases": ("surabaya",), "country": "Indonesia", "region": "Java"},
     {"name": "Bandung", "aliases": ("bandung",), "country": "Indonesia", "region": "Java"},
     {"name": "Java Island", "aliases": ("java island", "island of java"), "country": "Indonesia", "region": "Java"},
-    {"name": "Turkey", "aliases": ("turkey", "tÃ¼rkiye", "turkiye"), "country": "Turkey", "region": None},
+    {"name": "Türkiye", "aliases": ("turkey", "türkiye", "turkiye"), "country": "Türkiye", "region": None},
     {"name": "Jordan", "aliases": ("jordan",), "country": "Jordan", "region": None},
     {"name": "India", "aliases": ("india",), "country": "India", "region": None},
     {"name": "Malaysia", "aliases": ("malaysia",), "country": "Malaysia", "region": None},
@@ -192,13 +200,13 @@ _DESTINATION_CATALOG = (
     {"name": "Japan", "aliases": ("japan",), "country": "Japan", "region": None},
     {"name": "Tokyo", "aliases": ("tokyo",), "country": "Japan", "region": None},
     {"name": "Iran", "aliases": ("iran",), "country": "Iran", "region": None},
-    {"name": "United States", "aliases": ("united states", "united states of america", "usa", "u.s.a.", "america"), "country": "United States", "region": None},
+    {"name": "United States", "aliases": ("united states", "united states of america", "usa", "u.s.a."), "country": "United States", "region": None},
     {"name": "New York", "aliases": ("new york",), "country": "United States", "region": None},
     {"name": "Atlanta", "aliases": ("atlanta",), "country": "United States", "region": "Georgia"},
     {"name": "Savannah", "aliases": ("savannah",), "country": "United States", "region": "Georgia"},
-    {"name": "Istanbul", "aliases": ("istanbul",), "country": "Turkey", "region": None},
-    {"name": "Cappadocia", "aliases": ("cappadocia",), "country": "Turkey", "region": None},
-    {"name": "Antalya", "aliases": ("antalya",), "country": "Turkey", "region": None},
+    {"name": "Istanbul", "aliases": ("istanbul",), "country": "Türkiye", "region": None},
+    {"name": "Cappadocia", "aliases": ("cappadocia",), "country": "Türkiye", "region": None},
+    {"name": "Antalya", "aliases": ("antalya",), "country": "Türkiye", "region": None},
     {"name": "Tbilisi", "aliases": ("tbilisi",), "country": "Georgia", "region": None},
     {"name": "Batumi", "aliases": ("batumi",), "country": "Georgia", "region": None},
     {"name": "Petra", "aliases": ("petra",), "country": "Jordan", "region": None},
@@ -215,18 +223,19 @@ _DESTINATION_CATALOG = (
 )
 
 
-def find_destination_mentions(text: str) -> list[dict[str, str | None]]:
-    """Extract known destination names in the order they appear in a message.
+def find_destination_mentions(text: str) -> list[dict[str, Any]]:
+    """Extract known and globally indexed destinations in message order.
 
-    More specific place names win over parent regions/countries. The result is
-    deliberately small and suitable for storing in the conversation state.
-    Ambiguous names (Java and Georgia) are handled separately below.
+    More specific place names win over parent regions/countries. Java and
+    Georgia retain their explicit disambiguation rules. Global airport-city
+    matches can include ``ambiguous_countries`` when the same city exists in
+    multiple countries; callers must ask rather than guess.
     """
     value = _norm(text)
     if not value:
         return []
 
-    mentions: list[tuple[int, int, dict[str, str | None]]] = []
+    mentions: list[tuple[int, int, dict[str, Any]]] = []
     for item in _DESTINATION_CATALOG:
         for alias in item["aliases"]:
             pattern = rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])"
@@ -258,13 +267,106 @@ def find_destination_mentions(text: str) -> list[dict[str, str | None]]:
             m = re.search(r"\bgeorgia\b", value)
             mentions.append((m.start(), -7, {"name": "Georgia (U.S. state)", "country": "United States", "region": "Georgia"}))
 
+    # Identify explicit country-name spans before adding city-gazetteer matches.
+    # This matters when a country name is also a city name elsewhere (for
+    # example, Benin vs. Benin City in Nigeria). The exact country mention in
+    # "Tell me about Benin" must not be shadowed by a city-index collision.
+    normalized_text = normalize_geo_text(text)
+    explicit_country_spans: list[tuple[int, int, str]] = []
+    if _global_country_aliases is not None:
+        try:
+            for alias, canonical in _global_country_aliases().items():
+                if not alias:
+                    continue
+                pattern = rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])"
+                for country_match in re.finditer(pattern, normalized_text):
+                    explicit_country_spans.append((
+                        country_match.start(), country_match.end(), canonical
+                    ))
+        except Exception:
+            explicit_country_spans = []
+
+    # Extend the small offline regression catalogue with a global airport-city
+    # directory. This is data-driven and does not hard-code a country or city.
+    # If a city name maps to several countries, preserve the ambiguity so the
+    # caller can ask the traveler instead of silently choosing one. When the
+    # exact same text is an explicit country name, retain the country meaning.
+    if find_city_mentions is not None:
+        try:
+            for position, item in find_city_mentions(text):
+                city_name = str(item.get("name") or "")
+                city_end = position + len(city_name)
+                country_collision = any(
+                    start == position and end == city_end and canonical != item.get("country")
+                    for start, end, canonical in explicit_country_spans
+                )
+                if not country_collision:
+                    mentions.append((position, -len(city_name), item))
+        except Exception:
+            # Destination extraction must remain available even if the optional
+            # geographic dataset is damaged or unavailable.
+            pass
+
+    # Expand country coverage from ISO country data rather than a fixed list.
+    if _global_country_aliases is not None:
+        try:
+            has_country_travel_context = bool(re.search(
+                r"\b(?:travel|travelling|traveling|trip|tourist|tourism|visit|visiting|destination|"
+                r"flight|airport|safe|safety|advisory|weather|in|at|to|from|about|holiday|vacation)\b",
+                normalized_text,
+            ))
+            for alias, canonical in _global_country_aliases().items():
+                if not has_country_travel_context:
+                    break
+                if not alias:
+                    continue
+                # Georgia remains ambiguous unless the user explicitly qualifies it.
+                if canonical == "Georgia" and not re.search(
+                    r"\b(?:georgia\s+(?:country|the country)|country\s+of\s+georgia|caucasus|tbilisi)\b",
+                    normalized_text,
+                ):
+                    continue
+                pattern = rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])"
+                match = re.search(pattern, normalized_text)
+                if match:
+                    mentions.append((match.start(), -len(alias), {
+                        "name": canonical,
+                        "country": canonical,
+                        "region": None,
+                    }))
+        except Exception:
+            pass
+
     # Keep the most specific match at a position and deduplicate canonical names.
-    ordered: list[dict[str, str | None]] = []
+    # A country can share its name with a city elsewhere (for example, Benin
+    # City in Nigeria vs. the country of Benin). When the exact same text is
+    # independently recognized as an ISO country name, prefer the country
+    # interpretation for destination-information requests such as
+    # "Tell me about Benin". This avoids letting a city-gazetteer collision
+    # shadow an explicit country match.
+    ordered: list[dict[str, Any]] = []
+    positions: dict[str, int] = {}
     for _, _, item in sorted(mentions, key=lambda part: (part[0], part[1])):
-        if item["name"] not in [entry["name"] for entry in ordered]:
+        name = str(item.get("name") or "")
+        if not name:
+            continue
+        existing_index = positions.get(name)
+        if existing_index is None:
+            positions[name] = len(ordered)
             ordered.append(item)
-    # If a city and its parent country were both named, keep both; that is
-    # useful for storing explicit country context. No aliases are emitted twice.
+            continue
+
+        existing = ordered[existing_index]
+        is_country_match = (
+            item.get("country") == name and item.get("region") is None
+        )
+        existing_is_country_match = (
+            existing.get("country") == name and existing.get("region") is None
+        )
+        if is_country_match and not existing_is_country_match:
+            ordered[existing_index] = item
+
+    # Distinct city and country names are both retained when both are explicit.
     return ordered
 
 
@@ -447,7 +549,7 @@ def update_destination_context(text: str, context: dict) -> dict:
                     metadata_by_name.setdefault(old_item["name"], old_item)
 
         parent_country_names = {
-            "Indonesia", "United States", "Turkey", "Jordan", "India", "Malaysia",
+            "Indonesia", "United States", "Türkiye", "Turkey", "Jordan", "India", "Malaysia",
             "Singapore", "Thailand", "Japan", "Iran", "France", "United Arab Emirates",
         }
         destinations = [
