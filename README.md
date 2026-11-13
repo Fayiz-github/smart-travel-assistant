@@ -35,6 +35,7 @@ An AI-powered travel assistant for searching flights and hotels using Google Fli
 
 ### 🛡️ Built-in Input Validation & Safety
 - **Airport Resolution**: Uses a global airport directory for IATA validation and exact city/airport-name resolution. Multi-airport cities are sent as comma-separated airport codes where supported; ambiguous same-name cities require country clarification.
+- **Deterministic Preference Profiling**: Extracts budget, currency, cabin class, traveler count, and passport nationality strictly from explicit user statements; never guesses or infers sensitive personal data.
 - **Date Guardrails**: Validates `YYYY-MM-DD` calendar dates, prevents past dates, ensures return date > departure date, and respects the 330-day airline/hotel booking window (`MAX_ADVANCE_DAYS`).
 - **Hotel Stays**: Validates check-out > check-in and caps bookings to reasonable stay durations (1 to 30 nights).
 - **Guest & Budget Constraints**: Enforces positive guest counts (1–20 adults) and positive finite numbers for budgets.
@@ -78,6 +79,8 @@ DEFAULT_CURRENCY=USD
 APP_TIMEZONE=Asia/Kolkata
 TRAVEL_USER_ID=local-user
 TRAVEL_RISK_DB_PATH=travel_risk.db
+# Optional: only set this if the traveler explicitly provides their passport country.
+# TRAVELER_PASSPORT_COUNTRY=India
 ```
 
 ### 3. Run Interactively
