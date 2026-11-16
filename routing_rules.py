@@ -277,7 +277,7 @@ def _topic_is_negated_in_clause(clause: str, topic: str, other_topic: str) -> bo
     # phrase. This intentionally does NOT match ordinary worries such as
     # "I don't want to miss my flight" or "I don't want my flight delayed".
     article = r"(?:(?:any|the|a|an)\s+)?"
-    service_tail = r"(?=\s*(?:$|[.!?;]|,|today\b|tomorrow\b|right\s+now\b|at\s+all\b|anymore\b|any\s+more\b|(?:recommendations?|suggestions?|results?|options?|search(?:es)?|bookings?)\b))"
+    service_tail = r"(?=\s*(?:$|[.!?;]|,|today\b|tomorrow\b|right\s+now\b|at\s+all\b|anymore\b|any\s+more\b|yet\b|(?:recommendations?|suggestions?|results?|options?|search(?:es)?|bookings?)\b))"
     want_need_prefix = (
         r"\b(?:i|we)\s+(?:do\s+not|don't|dont)\s+(?:want|need|prefer)\s+"
         r"(?:(?:to\s+)?(?:search(?:\s+for)?|look\s+for|find|book|compare|reserve|include|use)\s+)?"
@@ -339,6 +339,18 @@ def negated_services(text: str) -> list[str]:
         for clause in clauses
         for first, second in ((flight_topic, hotel_topic), (hotel_topic, flight_topic))
     )
+    direct_action_pair = any(
+        re.search(
+            r"\b(?:do\s+not|don't|dont)\s+(?:search(?:\s+for)?|look\s+for|find|book|compare)\s+"
+            + r"(?:(?:any|the|a|an)\s+)?(?:" + first + r")\s+or\s+(?:(?:any|the|a|an)\s+)?(?:" + second + r")\b(?:\s+yet)?",
+            clause,
+            re.IGNORECASE,
+        )
+        for clause in clauses
+        for first, second in ((flight_topic, hotel_topic), (hotel_topic, flight_topic))
+    )
+    if direct_action_pair:
+        return ["flight", "hotel"]
     if both_declined:
         return ["flight", "hotel"]
 
