@@ -313,6 +313,159 @@ def normalise_tavily_date(value: Any, content: str = "") -> str:
 
 
 
+def classify_source(url: str) -> str:
+    """Conservative source tier from hostname; this is a hint, not verification."""
+    try:
+        host = (urlsplit(url).hostname or "").lower().split(":")[0].removeprefix("www.")
+    except Exception:
+        return "unclassified"
+    if not host:
+        return "unclassified"
+    # Government domains vary globally (.gov, .gov.xx, .gouv.xx, .gob.xx,
+    # .go.xx, .govt.xx, ministry/police domains). This is only a source hint;
+    # page-level ownership and claim support must still be checked separately.
+    official_suffixes = (
+        ".gov", ".gouv.fr", ".gob.", ".gov.au", ".gc.ca", ".gov.in",
+        ".govt.nz", ".gov.sg", ".gov.ae", ".europa.eu", ".police.uk", ".mil",
+    )
+    country_code_gov = bool(re.search(r"\.(?:gov|gouv|gob|gobierno|govt|go|police)\.[a-z]{2,3}$", host))
+    if host.endswith(official_suffixes) or country_code_gov or host in {
+        "gov.uk", "gov.in", "service-public.fr", "diplomatie.gouv.fr",
+        "interieur.gouv.fr", "france.fr", "mea.gov.in", "travel.state.gov",
+        "imi.gov.my", "mdac.imi.gov.my", "malaysia.gov.my", "kln.gov.my",
+        "motac.gov.my", "immigration.gov.my", "mfa.gov.my",
+    }:
+        return "official_domain"
+    if any(host == domain or host.endswith("." + domain) for domain in (
+        "reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "france24.com",
+        "theguardian.com", "afp.com", "dw.com", "aljazeera.com",
+    )):
+        return "established_news"
+    if any(host == domain or host.endswith("." + domain) for domain in (
+        "facebook.com", "youtube.com", "tiktok.com", "x.com", "twitter.com",
+        "instagram.com", "reddit.com",
+    )):
+        return "social_or_user_generated"
+    return "other_web_source"
+
+
+
+_TRAVEL_IMPACT_TERMS = (
+    "travel", "travelling", "traveling", "tourism", "tourist", "tourists",
+    "visitor", "visitors", "airport", "airline", "flight", "aviation",
+    "rail", "train", "metro", "subway", "bus", "road", "traffic", "port",
+    "ferry", "transport", "transit", "hotel", "attraction", "museum",
+    "event", "festival", "closure", "closed", "opening hours", "public safety",
+    "police", "security", "protest", "demonstration", "strike", "curfew",
+    "advisory", "warning", "alert", "incident", "disruption", "delay",
+    "cancel", "cancelled", "canceled", "cancellation", "evacuation",
+    "evacuate", "evacuated", "border", "visa", "weather", "storm", "flood",
+    "earthquake", "wildfire", "health alert", "outbreak", "emergency",
+)
+_LOCAL_AUTHORITY_TERMS = (
+    "city government", "municipal", "municipality", "city council", "local council",
+    "tourism authority", "tourist board", "department of tourism", "airport authority",
+    "airport operator", "transport authority", "public transport authority", "police",
+    "ministry", "government", "civil aviation", "port authority", "emergency management",
+)
+
+
+def _phrase_present(text: str, phrase: str) -> bool:
+    phrase = (phrase or "").strip().casefold()
+    if not phrase:
+        return False
+    return bool(re.search(r"(?<![a-z0-9])" + re.escape(phrase) + r"(?![a-z0-9])", text.casefold()))
+
+
+def destination_source_relevance(
+    item: dict[str, Any], city: str = "", country: str = "", source_kind: str = "",
+) -> tuple[bool, str, str]:
+    """Keep destination-relevant travel evidence for any city/country worldwide.
+
+    City-specific results must identify the requested city in the title, URL,
+    or meaningful page content AND contain a travel-impact signal. Official
+    country-level advisories may be retained only as clearly labelled context.
+    No destination-specific domains are hard-coded.
+    """
+    city = _safe_text(city, 120).strip()
+    country = _safe_text(country, 120).strip()
+    title = _safe_text(item.get("title"), 500)
+    content = _safe_text(item.get("content") or item.get("raw_content") or item.get("snippet"), 6000)
+    url = _safe_text(item.get("url"), 700)
+    title_l = title.casefold()
+    content_l = content.casefold()
+    url_l = url.casefold()
+    haystack = f"{title_l} {content_l} {url_l}"
+    host = (urlsplit(url).hostname or "").lower().removeprefix("www.")
+
+    # Whole-word matching avoids false positives such as "bus" in "business"
+    # and "port" in "support".
+    travel_signal = any(_phrase_present(haystack, term) for term in _TRAVEL_IMPACT_TERMS)
+    city_title = _phrase_present(title_l, city)
+    city_url = _phrase_present(url_l, city)
+    city_content = _phrase_present(content_l, city)
+    # Multi-word country names often appear as their common initialism in
+    # government advisories (for example, United Arab Emirates -> UAE).
+    country_aliases = {country.casefold()} if country else set()
+    if country and _global_country_aliases is not None:
+        try:
+            country_aliases.update(
+                alias for alias, canonical in _global_country_aliases().items()
+                if str(canonical).casefold() == country.casefold()
+            )
+        except Exception:
+            pass
+    country_words = re.findall(r"[A-Za-z]+", country)
+    if len(country_words) >= 2:
+        initials = "".join(word[0] for word in country_words).casefold()
+        # Never use two-letter initials (e.g. "US") as free-text aliases.
+        if len(initials) >= 3:
+            country_aliases.add(initials)
+    country_match = any(_phrase_present(haystack, alias) for alias in country_aliases)
+
+    # A local authority is inferred from generic authority terminology plus a
+    # destination reference, not from a Dubai-only domain allowlist.
+    authority_signal = any(_phrase_present(haystack, term) for term in _LOCAL_AUTHORITY_TERMS)
+    host_city_signal = bool(city) and _phrase_present(host.replace("-", " ").replace(".", " "), city)
+
+    if city:
+        # A title/URL city match is stronger than a passing mention buried in
+        # the page body. A body-only mention must be accompanied by an explicit
+        # local authority reference to avoid retaining unrelated world news.
+        if (city_title or city_url) and travel_signal:
+            return True, "city_specific", "destination city appears in title/URL and travel-impact topic is present"
+        if city_content and authority_signal and travel_signal:
+            return True, "city_specific", "destination city and local authority/travel-impact evidence appear in page content"
+        if host_city_signal and travel_signal:
+            return True, "city_specific", "destination city appears in source hostname and travel-impact topic is present"
+
+    # For country-only destination searches, require both a country reference
+    # and a travel-impact topic; do not pass generic unrelated results.
+    if not city and country_match and travel_signal:
+        tier = str(item.get("source_tier") or classify_source(url))
+        if tier == "official_domain" and source_kind in {
+            "destination official sources", "current airport and transport operations",
+            "traveler government advisory", "official country context",
+        }:
+            return True, "country_wide_context", "official country advisory; destination-wide context"
+        if tier in {"official_domain", "established_news"}:
+            return True, "country_wide_context", "destination-country travel-impact reporting"
+
+    # Country-only official advice is context for a city query, never city proof.
+    tier = str(item.get("source_tier") or classify_source(url))
+    if city and country_match and travel_signal and tier == "official_domain" and source_kind in {
+        "traveler government advisory", "destination official sources",
+        "current airport and transport operations", "official country context",
+    }:
+        return True, "country_wide_context", "official country advisory; not city-specific"
+
+    if not travel_signal:
+        return False, "unrelated", "no travel-impact topic detected"
+    if city and not (city_title or city_url or city_content or host_city_signal):
+        return False, "unrelated", "requested city not identified in title, URL, or page content"
+    return False, "unrelated", "source does not meet destination and travel-topic relevance requirements"
+
+
 def is_future_publication_date(value: str, today: date | None = None) -> bool:
     parsed = normalise_tavily_date(value)
     if parsed == "UNKNOWN":
