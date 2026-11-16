@@ -113,6 +113,229 @@ def _normalise_url(url: str) -> str:
 
 
 
+def _parse_date_value(value: Any) -> str:
+    """Normalize provider date values to YYYY-MM-DD without guessing."""
+    if value is None or value == "":
+        return "UNKNOWN"
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        # Accept Unix seconds or milliseconds only when they fall in a sane
+        # publication window; otherwise do not interpret arbitrary numbers.
+        try:
+            stamp = float(value)
+            if stamp > 10_000_000_000:
+                stamp /= 1000.0
+            if 0 < stamp < 4_102_444_800:  # before 2100-01-01
+                return datetime.fromtimestamp(stamp, timezone.utc).date().isoformat()
+        except (OverflowError, OSError, ValueError):
+            return "UNKNOWN"
+        return "UNKNOWN"
+
+    candidate = str(value).strip()
+    if not candidate or candidate.lower() in {"unknown", "not supplied", "none", "null", "n/a"}:
+        return "UNKNOWN"
+    # ISO-8601, including timestamps with Z or numeric timezone offsets.
+    try:
+        parsed = datetime.fromisoformat(candidate.replace("Z", "+00:00"))
+        return parsed.date().isoformat()
+    except ValueError:
+        pass
+    # RFC 2822 dates commonly appear in HTTP Last-Modified headers.
+    try:
+        from email.utils import parsedate_to_datetime
+        parsed = parsedate_to_datetime(candidate)
+        if parsed:
+            return parsed.date().isoformat()
+    except (TypeError, ValueError, OverflowError):
+        pass
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(candidate, fmt).date().isoformat()
+        except ValueError:
+            continue
+    # Common metadata timestamps sometimes include a time after a textual date.
+    match = re.search(
+        r"(?i)(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+        r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+        r"\s+\d{1,2},?\s+\d{4}", candidate
+    )
+    if match:
+        for fmt in ("%B %d, %Y", "%b %d, %Y"):
+            try:
+                return datetime.strptime(match.group(0).replace(",", ","), fmt).date().isoformat()
+            except ValueError:
+                continue
+    return "UNKNOWN"
+
+
+def _date_from_labeled_text(content: str, labels: str) -> str:
+    """Extract a date only when it is attached to an explicit date label."""
+    date_pattern = (
+        r"(\d{4}-\d{2}-\d{2}(?:[T ][0-9:.+Z\-]+)?|"
+        r"[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{4}|"
+        r"\d{1,2}\s+[A-Za-z]{3,9}\s+\d{4})"
+    )
+    match = re.search(rf"(?:{labels})\s*[:=\-]?\s*{date_pattern}", content, re.IGNORECASE)
+    return _parse_date_value(match.group(1)) if match else "UNKNOWN"
+
+
+def _date_from_document_identifier(item: dict[str, Any]) -> str:
+    """Use a date embedded in an alert/report title or URL as its document date."""
+    text = " ".join(str(item.get(key) or "") for key in ("title", "url"))
+    patterns = (
+        r"\b(20\d{2})[-_/](0?[1-9]|1[0-2])[-_/](0?[1-9]|[12]\d|3[01])\b",
+        r"\b(January|February|March|April|May|June|July|August|September|October|November|December)"
+        r"[\s_-]+(0?[1-9]|[12]\d|3[01]),?[\s_-]+(20\d{2})\b",
+        r"\b(0?[1-9]|[12]\d|3[01])[-_ ]"
+        r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-_ ](20\d{2})\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            continue
+        if pattern == patterns[0]:
+            value = "-".join(match.groups())
+        elif pattern == patterns[1]:
+            value = f"{match.group(1)} {match.group(2)}, {match.group(3)}"
+        else:
+            value = f"{match.group(1)} {match.group(2)} {match.group(3)}"
+        parsed = _parse_date_value(value)
+        if parsed != "UNKNOWN":
+            return parsed
+    return "UNKNOWN"
+
+
+def extract_tavily_dates(item: dict[str, Any], content: str = "") -> tuple[str, str]:
+    """Return (publication/document date, page-update date) as separate values.
+
+    Only explicit publication metadata/labels count as a verified publication
+    date. A date in a title or URL is returned as a document-date inference and
+    separately labelled by ``tavily_publication_date_basis``. Generic unlabelled
+    `date` fields and page-update dates are never publication dates.
+    """
+    published = "UNKNOWN"
+    updated = "UNKNOWN"
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    date_fields = {**metadata, **item}
+
+    for key in ("published_date", "publishedDate", "publication_date", "datePublished", "date_published", "article:published_time", "og:published_time"):
+        candidate = _parse_date_value(date_fields.get(key))
+        if candidate != "UNKNOWN":
+            published = candidate
+            break
+    for key in ("updated_date", "last_updated", "lastModified", "modified_date", "updatedAt", "dateModified", "date_modified", "article:modified_time", "og:updated_time", "last-modified"):
+        candidate = _parse_date_value(date_fields.get(key))
+        if candidate != "UNKNOWN":
+            updated = candidate
+            break
+
+    if content:
+        # HTML metadata attributes and JSON-LD commonly separate the date label
+        # from its value, so inspect those structures before plain-text labels.
+        if published == "UNKNOWN":
+            jsonld_match = re.search(r"[\"'](?:datePublished|date_published)[\"']\s*:\s*[\"']([^\"']+)", content, re.IGNORECASE)
+            if jsonld_match:
+                published = _parse_date_value(jsonld_match.group(1))
+        if published == "UNKNOWN":
+            meta_match = re.search(
+                r"(?:property|name|itemprop)=[\"'](?:article:published_time|datePublished|date_published)[\"'][^>]*content=[\"']([^\"']+)",
+                content, re.IGNORECASE,
+            ) or re.search(
+                r"content=[\"']([^\"']+)[\"'][^>]*(?:property|name|itemprop)=[\"'](?:article:published_time|datePublished|date_published)[\"']",
+                content, re.IGNORECASE,
+            )
+            if meta_match:
+                published = _parse_date_value(meta_match.group(1))
+        if updated == "UNKNOWN":
+            jsonld_match = re.search(r"[\"'](?:dateModified|date_modified)[\"']\s*:\s*[\"']([^\"']+)", content, re.IGNORECASE)
+            if jsonld_match:
+                updated = _parse_date_value(jsonld_match.group(1))
+        if updated == "UNKNOWN":
+            meta_match = re.search(
+                r"(?:property|name|itemprop)=[\"'](?:article:modified_time|dateModified|date_modified|last-modified)[\"'][^>]*content=[\"']([^\"']+)",
+                content, re.IGNORECASE,
+            ) or re.search(
+                r"content=[\"']([^\"']+)[\"'][^>]*(?:property|name|itemprop)=[\"'](?:article:modified_time|dateModified|date_modified|last-modified)[\"']",
+                content, re.IGNORECASE,
+            )
+            if meta_match:
+                updated = _parse_date_value(meta_match.group(1))
+        if published == "UNKNOWN":
+            published = _date_from_labeled_text(
+                content,
+                r"datePublished|article:published_time|published(?:\s+on)?|publication\s+date|originally\s+published",
+            )
+        if updated == "UNKNOWN":
+            updated = _date_from_labeled_text(
+                content,
+                r"dateModified|article:modified_time|last\s+modified|last\s+updated|updated(?:\s+on)?|modified\s+on",
+            )
+
+    if published == "UNKNOWN":
+        published = _date_from_document_identifier(item)
+    return published, updated
+
+
+def tavily_publication_date_basis(item: dict[str, Any], content: str = "") -> str:
+    """Describe where the publication/document date came from."""
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    date_fields = {**metadata, **item}
+    for key in ("published_date", "publishedDate", "publication_date", "datePublished", "date_published", "article:published_time", "og:published_time"):
+        if _parse_date_value(date_fields.get(key)) != "UNKNOWN":
+            return "provider_metadata"
+    if content:
+        html_published = re.search(
+            r"(?:property|name|itemprop)=[\"'](?:article:published_time|datePublished|date_published)[\"'][^>]*content=[\"']([^\"']+)",
+            content, re.IGNORECASE,
+        ) or re.search(
+            r"content=[\"']([^\"']+)[\"'][^>]*(?:property|name|itemprop)=[\"'](?:article:published_time|datePublished|date_published)[\"']",
+            content, re.IGNORECASE,
+        )
+        jsonld_published = re.search(r"[\"'](?:datePublished|date_published)[\"']\s*:\s*[\"']([^\"']+)", content, re.IGNORECASE)
+        if ((html_published and _parse_date_value(html_published.group(1)) != "UNKNOWN")
+            or (jsonld_published and _parse_date_value(jsonld_published.group(1)) != "UNKNOWN")
+            or _date_from_labeled_text(
+            content, r"datePublished|article:published_time|published(?:\s+on)?|publication\s+date|originally\s+published"
+        ) != "UNKNOWN"):
+            return "page_content"
+    if _date_from_document_identifier(item) != "UNKNOWN":
+        return "title_or_url"
+    return "unknown"
+
+
+def normalise_tavily_date(value: Any, content: str = "") -> str:
+    """Backward-compatible publication-date normalizer; never substitutes today."""
+    published, _updated = extract_tavily_dates({"published_date": value}, content)
+    return published
+
+
+
+def is_future_publication_date(value: str, today: date | None = None) -> bool:
+    parsed = normalise_tavily_date(value)
+    if parsed == "UNKNOWN":
+        return False
+    try:
+        return date.fromisoformat(parsed) > (today or _utc_now().date())
+    except ValueError:
+        return False
+
+
+def is_future_verified_publication(
+    item: dict[str, Any], content: str = "", today: date | None = None
+) -> bool:
+    """Reject future provider/page publication metadata, not inferred event dates."""
+    published, _updated = extract_tavily_dates(item, content)
+    basis = tavily_publication_date_basis(item, content)
+    return (
+        basis in {"provider_metadata", "page_content"}
+        and is_future_publication_date(published, today)
+    )
+
+
+
 def extract_tavily_results(payload: Any) -> list[dict[str, Any]]:
     """Return Tavily result dictionaries across common LangChain return shapes.
 
