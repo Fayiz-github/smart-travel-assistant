@@ -37,6 +37,17 @@ except Exception:
 logger = logging.getLogger("travel_system.flight_agent")
 from search_limits import SERPAPI_LIMITER, SearchBudgetExceeded
 
+try:
+    from global_geography import (
+        is_valid_iata_code,
+        supported_currency_codes,
+        global_destination_airport_codes,
+    )
+except ImportError:
+    is_valid_iata_code = None
+    supported_currency_codes = None
+    global_destination_airport_codes = None
+
 SUPPORTED_CURRENCIES = {
     "INR", "USD", "EUR", "GBP", "MYR", "SGD", "THB", "AED", "CAD", "AUD",
     "JPY", "CHF", "CNY", "HKD", "KRW", "IDR", "PHP", "VND", "LKR", "NPR",
@@ -46,7 +57,17 @@ SUPPORTED_CURRENCIES = {
 }
 
 def is_supported_currency(value: str) -> bool:
-    return isinstance(value, str) and value.strip().upper() in SUPPORTED_CURRENCIES
+    if not isinstance(value, str):
+        return False
+    code = value.strip().upper()
+    if supported_currency_codes is not None:
+        try:
+            dynamic = supported_currency_codes()
+            if dynamic:
+                return code in dynamic
+        except Exception:
+            pass
+    return code in SUPPORTED_CURRENCIES
 
 
 
@@ -57,7 +78,7 @@ def is_supported_currency(value: str) -> bool:
 def _env_int(key: str, default: int, min_val: int | None = None, max_val: int | None = None) -> int:
     try:
         val = int(os.getenv(key, str(default)))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         logger.warning("Config '%s' invalid; using default %d.", key, default)
         return default
     if min_val is not None and val < min_val:
@@ -74,7 +95,7 @@ def _env_float(key: str, default: float, min_val: float | None = None, max_val: 
         val = float(os.getenv(key, str(default)))
         if not math.isfinite(val):
             raise ValueError("non-finite")
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         logger.warning("Config '%s' invalid; using default %f.", key, default)
         return default
     if min_val is not None and val < min_val:
@@ -94,7 +115,7 @@ CHEAP_TIER_MULTIPLIER     = _env_float("FLIGHT_CHEAP_MULTIPLIER", 1.20, min_val=
 BUDGET_TIER_MULTIPLIER    = _env_float("FLIGHT_BUDGET_MULTIPLIER", 1.40, min_val=CHEAP_TIER_MULTIPLIER, max_val=10.0)
 MAX_DISPLAY_PER_TIER      = _env_int("MAX_DISPLAY_PER_TIER", 3, min_val=1, max_val=20)
 MAX_ADVANCE_DAYS          = _env_int("MAX_ADVANCE_DAYS", 330, min_val=1, max_val=730)
-MAX_EXPLORE_AIRPORTS      = _env_int("MAX_EXPLORE_AIRPORTS", 5, min_val=1, max_val=25)
+MAX_EXPLORE_AIRPORTS      = _env_int("MAX_EXPLORE_AIRPORTS", 12, min_val=1, max_val=25)
 FLEXIBLE_DATE_RANGE_DAYS  = _env_int("FLEXIBLE_DATE_RANGE_DAYS", 0, min_val=0, max_val=14)
 CACHE_TTL_SECONDS         = _env_int("FLIGHT_CACHE_TTL_SECONDS", 180, min_val=15, max_val=3600)
 CACHE_MAX_ENTRIES         = _env_int("CACHE_MAX_ENTRIES", 500, min_val=50, max_val=5000)
@@ -109,7 +130,8 @@ TRANSIT_VISA_COUNTRIES = {
 }
 
 # ---------------------------------------------------------------------------
-# Authoritative IATA code reference data (FL-01, FL-12)
+# Curated fallback IATA codes. The global airportsdata directory is authoritative
+# for runtime validation when installed; this list keeps offline imports usable.
 # ---------------------------------------------------------------------------
 VALID_IATA_CODES = {
     # India (Major & Regional)
@@ -152,13 +174,55 @@ VALID_IATA_CODES = {
 
 
 def is_valid_code(code: str) -> bool:
-    """Validate 3-letter IATA code against maintained real-world airport directory."""
+    """Validate one or more IATA airport codes against the global airport dataset."""
     if not isinstance(code, str):
         return False
     clean = code.strip().upper()
+    if "," in clean:
+        parts = [part.strip() for part in clean.split(",")]
+        return bool(parts) and all(is_valid_code(part) for part in parts)
     if len(clean) != 3 or not clean.isascii() or not clean.isalpha():
         return False
+    if is_valid_iata_code is not None:
+        try:
+            dynamic_result = is_valid_iata_code(clean)
+            if dynamic_result is not None:
+                return bool(dynamic_result)
+        except Exception:
+            pass
     return clean in VALID_IATA_CODES
+
+
+def default_global_destination_airports(limit: int | None = None) -> list[str]:
+    """Global, continent-diverse defaults for budget destination exploration."""
+    limit = MAX_EXPLORE_AIRPORTS if limit is None else max(1, min(int(limit), 25))
+    if global_destination_airport_codes is not None:
+        try:
+            values = global_destination_airport_codes(limit)
+            if values:
+                return values
+        except Exception:
+            pass
+    return ["LHR", "CDG", "FRA", "IST", "DXB", "SIN", "HND", "SYD", "JFK", "LAX", "GRU", "JNB", "NBO", "DOH", "MEX"][:max(1, min(int(limit), 25))]
+
+
+def resolve_iata_location(value: str) -> str | None:
+    """Resolve an IATA code, city, or exact airport name to SerpApi location IDs.
+
+    A multi-airport city returns a comma-separated list supported by Google
+    Flights. Ambiguous same-name cities raise AmbiguousLocationError.
+    """
+    clean = str(value or "").strip()
+    if not clean:
+        return None
+    try:
+        from global_geography import resolve_iata_location as _resolve
+        resolved = _resolve(clean)
+    except ImportError:
+        resolved = None
+    if resolved:
+        return resolved
+    return clean.upper() if is_valid_code(clean) else None
 
 
 def _safe_provider_text(value: Any, max_len: int = 100) -> str:
@@ -316,7 +380,7 @@ def evaluate_layovers(itinerary: dict) -> list[str]:
             elif duration > MAX_COMFORT_LAYOVER_MINS:
                 warnings.append(f"LONG LAYOVER at {airport_name} ({airport_code}): {time_str} wait.")
             else:
-                warnings.append(f"Layover at {airport_name} ({airport_code}): {time_str}.")
+                warnings.append(f"Layover at {airport_name} ({airport_code}): {time_str}. This is not a guarantee of a valid connection; minimum connection times vary by airport, terminal, airline and ticket type.")
 
         if bool(layover.get("overnight")):
             warnings.append(f"Overnight layover at {airport_code}; confirm whether an overnight transit visa or hotel is needed.")
@@ -371,11 +435,13 @@ def _validate_flight_request(
 ) -> str | None:
     """Direct validation function (FL-04). Returns error message if invalid, else None."""
     if not is_valid_code(dep_id):
-        return f"Invalid departure airport code '{dep_id}'. Must be a recognized 3-letter IATA code."
+        return f"Invalid departure location '{dep_id}'. Use a supported city/airport name or valid IATA code(s)."
     if not is_valid_code(arr_id):
-        return f"Invalid arrival airport code '{arr_id}'. Must be a recognized 3-letter IATA code."
-    if dep_id.strip().upper() == arr_id.strip().upper():
-        return "Departure and arrival airport codes cannot be identical."
+        return f"Invalid arrival location '{arr_id}'. Use a supported city/airport name or valid IATA code(s)."
+    dep_codes = {part.strip().upper() for part in dep_id.split(",") if part.strip()}
+    arr_codes = {part.strip().upper() for part in arr_id.split(",") if part.strip()}
+    if dep_codes & arr_codes:
+        return "Departure and arrival airport selections overlap. Choose distinct origin and destination airports/cities."
 
     if not isinstance(adults, int) or isinstance(adults, bool) or adults < 1 or adults > 9:
         return f"Number of adults ({adults}) must be an integer between 1 and 9."
@@ -386,7 +452,7 @@ def _validate_flight_request(
 
     try:
         out_dt = datetime.strptime(date_str.strip(), "%Y-%m-%d").date()
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         return f"Invalid target_date format '{date_str}'. Expected YYYY-MM-DD."
 
     today_utc = datetime.now(APP_TIMEZONE).date()
@@ -403,7 +469,7 @@ def _validate_flight_request(
             return "return_date is required when trip_type is '1' (Round Trip)."
         try:
             ret_dt = datetime.strptime(return_date.strip(), "%Y-%m-%d").date()
-        except ValueError:
+        except (ValueError, TypeError, AttributeError):
             return f"Invalid return_date format '{return_date}'. Expected YYYY-MM-DD."
         if ret_dt <= out_dt:
             return "return_date must be strictly after outbound travel date."
