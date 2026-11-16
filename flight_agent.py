@@ -502,7 +502,16 @@ def fetch_flights(
     force_refresh: bool = False,
     travel_class: str = "1",
 ) -> FlightFetchResult:
-    """Fetch flights with direct input validation and structured outcomes (FL-04, F-02)."""
+    """Fetch flights with global city/airport resolution and structured outcomes."""
+    try:
+        dep_id = resolve_iata_location(dep_id) or dep_id
+        arr_id = resolve_iata_location(arr_id) or arr_id
+    except ValueError as exc:
+        return FlightFetchResult(
+            status="error",
+            error_code="LOCATION_RESOLUTION_ERROR",
+            error_message=str(exc),
+        )
     val_err = _validate_flight_request(dep_id, arr_id, date_str, currency, trip_type, stops, return_date, adults, children, travel_class)
     if val_err:
         return FlightFetchResult(
@@ -906,7 +915,15 @@ def run_flight_agent(
     force_refresh: bool = False,
     travel_class: str = "1",
 ) -> str:
-    """Execute flight search agent with input validation and accurate per-leg pricing."""
+    """Execute flight search agent with global city/airport resolution and validation."""
+    try:
+        dep_id = resolve_iata_location(dep_id) or dep_id
+        arr_id = resolve_iata_location(arr_id) or arr_id
+    except ValueError as exc:
+        report = f"Location resolution error: {exc}"
+        if echo:
+            print(report)
+        return report
     val_err = _validate_flight_request(dep_id, arr_id, target_date, currency, trip_type, stops, return_date, adults, children, travel_class)
     if val_err:
         report = f"⚠️ Validation Error: {val_err}"
@@ -1089,6 +1106,20 @@ def explore_destinations(
     echo: bool = False,
     travel_class: str = "1",
 ) -> str:
+    if not isinstance(candidate_airports, list) or not candidate_airports:
+        candidate_airports = default_global_destination_airports(MAX_EXPLORE_AIRPORTS)
+    try:
+        dep_id = resolve_iata_location(dep_id) or dep_id
+        candidate_airports = [
+            resolve_iata_location(value) or value
+            for value in (candidate_airports or [])
+        ]
+    except ValueError as exc:
+        msg = f"Location resolution error: {exc}"
+        if echo:
+            print(msg)
+        return msg
+
     if not is_valid_code(dep_id):
         msg = f"⚠️ Invalid departure airport '{dep_id}'."
         if echo:
@@ -1098,14 +1129,18 @@ def explore_destinations(
     norm_dep = dep_id.strip().upper()
     norm_curr = currency.strip().upper()
 
-    if not isinstance(candidate_airports, list):
-        candidate_airports = []
-
-    candidates = [
-        code.strip().upper()
-        for code in candidate_airports
-        if isinstance(code, str) and is_valid_code(code.strip().upper()) and code.strip().upper() != norm_dep
-    ][:MAX_EXPLORE_AIRPORTS]
+    departure_codes = {part.strip().upper() for part in norm_dep.split(",") if part.strip()}
+    candidates = []
+    for raw_code in candidate_airports:
+        if not isinstance(raw_code, str):
+            continue
+        code = raw_code.strip().upper()
+        candidate_codes = {part.strip().upper() for part in code.split(",") if part.strip()}
+        if is_valid_code(code) and candidate_codes and not (candidate_codes & departure_codes):
+            if code not in candidates:
+                candidates.append(code)
+        if len(candidates) >= MAX_EXPLORE_AIRPORTS:
+            break
 
     if not candidates:
         msg = "⚠️ No valid destination airports were provided to explore."
