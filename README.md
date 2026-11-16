@@ -81,6 +81,9 @@ TRAVEL_USER_ID=local-user
 TRAVEL_RISK_DB_PATH=travel_risk.db
 # Optional: only set this if the traveler explicitly provides their passport country.
 # TRAVELER_PASSPORT_COUNTRY=India
+
+# Optional global budget-exploration breadth (1-25, default 12)
+# MAX_EXPLORE_AIRPORTS=12
 ```
 
 ### 3. Run Interactively
@@ -284,3 +287,13 @@ The application is not restricted to a fixed city or country list. `global_geogr
 - Multi-airport cities are resolved to comma-separated IATA airport codes supported by SerpApi Google Flights.
 
 The geographic datasets are offline reference data, not a live geocoder. `airportsdata` covers operational airport locations with IATA codes; `geonamescache` broadens city recognition but uses a population threshold and does not cover every village, resort or transport hub. A destination without a matching airport may still be researched or used for hotel search, but flight search needs a supported airport/location ID. Ambiguous place names must be disambiguated. The datasets should be updated periodically. Use Python 3.12 or newer for the current `airportsdata` release.
+
+## Evidence and Safety Boundaries
+
+- A page's update date is not treated as its publication date.
+- Dates inferred from a title or URL are labelled as inferred and cannot establish recent publication.
+- Old advisories remain historical/background unless a current source explicitly confirms continuing validity.
+- Search-result absence is not proof that a destination is safe.
+- Official-domain classification is a source hint, not independent verification of page authenticity or claim support.
+- Flight/hotel results are informational; the application does not book or pay for travel.
+- Layover thresholds are screening heuristics, not guarantees of a valid connection. Minimum connection times depend on airport, terminal, airline, itinerary and ticketing conditions.
