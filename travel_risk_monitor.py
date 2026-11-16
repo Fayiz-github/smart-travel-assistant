@@ -606,6 +606,155 @@ def parse_wishlist_command(text: str) -> dict[str, str] | None:
     return None
 
 
+def _date_is_recent(value: Any, today: date, max_age_days: int = 7) -> bool:
+    parsed = _parse_date_value(value)
+    if parsed == "UNKNOWN":
+        return False
+    try:
+        age = (today - date.fromisoformat(parsed)).days
+        return 0 <= age <= max_age_days
+    except ValueError:
+        return False
+
+
+def _has_recent_verified_publication(source: dict[str, Any], today: date, days: int = 7) -> bool:
+    """Only provider/page publication metadata can establish recent publication."""
+    basis = str(source.get("publication_date_basis") or "unknown")
+    if basis not in {"provider_metadata", "page_content"}:
+        return False
+    return _date_is_recent(source.get("published_date"), today, days)
+
+
+def source_has_risk_signal(source: dict[str, Any]) -> bool:
+    """Return true only when the source text contains a concrete travel-risk signal."""
+    text = " ".join(
+        str(source.get(key) or "")
+        for key in ("title", "content", "raw_content", "snippet")
+    ).casefold()
+    pattern = (
+        r"\b(?:disrupt\w*|clos\w*|suspend\w*|cancel\w*|delay\w*|"
+        r"restrict\w*|evacuat\w*|attack\w*|incident\w*|security alert|"
+        r"travel advisory|warning|alert|protest\w*|strike\w*|curfew|airspace|"
+        r"airport access|border closure|emergency|flood|storm|wildfire|earthquake|"
+        r"outbreak|caution|risk|avoid all travel|reconsider travel|do not travel)\b"
+    )
+    return bool(re.search(pattern, text, re.IGNORECASE))
+
+
+def _has_recent_official_evidence(sources: list[dict[str, Any]], today: date, days: int = 7) -> bool:
+    """Require recent, verified official publication about a travel-risk signal."""
+    return any(
+        source.get("source_tier") == "official_domain"
+        and source.get("geographic_scope") in {"city_specific", "country_wide_context"}
+        and source_has_risk_signal(source)
+        and _has_recent_verified_publication(source, today, days)
+        for source in sources
+    )
+
+
+def _has_recent_credible_reporting(sources: list[dict[str, Any]], today: date, days: int = 7) -> bool:
+    return any(
+        source.get("source_tier") in {"official_domain", "established_news"}
+        and _has_recent_verified_publication(source, today, days)
+        for source in sources
+    )
+
+
+def validate_current_official_section(
+    summary: str,
+    sources: list[dict[str, Any]],
+    destination: str,
+    country: str | None,
+    today: str | date,
+) -> tuple[str, bool]:
+    """Validate current-status citations against recent official risk evidence.
+
+    City requests require city-specific official sources. Country-wide advisories
+    remain context and cannot validate a city-level operational claim.
+    """
+    if isinstance(today, str):
+        try:
+            checked_date = date.fromisoformat(today)
+        except ValueError:
+            checked_date = _utc_now().date()
+    else:
+        checked_date = today
+
+    is_city_request = bool(
+        destination
+        and (not country or destination.casefold() != country.casefold())
+    )
+    required_scope = "city_specific" if is_city_request else "country_wide_context"
+    current_ids = {
+        f"S{index}"
+        for index, item in enumerate(sources, start=1)
+        if item.get("source_tier") == "official_domain"
+        and item.get("geographic_scope") == required_scope
+        and _has_recent_official_evidence([item], checked_date)
+    }
+
+    status_pattern = (
+        r"(?ims)^\s*(?:\*\*)?(?:Officially confirmed items|Current official status)"
+        r"(?:\*\*)?\s*:?[^\n]*\n.*?"
+        r"(?=^\s*(?:\*\*)?(?:Other reports / unconfirmed items|Practical tourist impact|"
+        r"Important unknowns|Notes on sources|Cited sources)\b.*$|\Z)"
+    )
+    status_match = re.search(status_pattern, summary or "")
+    cited_ids = (
+        {f"S{number}" for number in re.findall(r"\[S(\d+)\]", status_match.group(0))}
+        if status_match else set()
+    )
+    citations_valid = bool(cited_ids) and cited_ids.issubset(current_ids)
+
+    if not current_ids:
+        if is_city_request:
+            replacement = (
+                "**Current official status**\n"
+                f"- No recent official source explicitly confirming a current city-specific disruption "
+                f"for {destination} was retrieved. Country-wide advisories are context only and do not "
+                "prove a city-level disruption.\n\n"
+            )
+        else:
+            replacement = (
+                "**Current official status**\n"
+                f"- No current official disruption is confirmed by the retrieved evidence for {destination}.\n\n"
+            )
+        summary, replaced = re.subn(status_pattern, replacement, summary or "", count=1)
+        if not replaced:
+            summary = replacement + (summary or "")
+        summary += (
+            "\n\n**Current-confirmation limit:** No recent, verifiable official publication "
+            f"within the last 7 days was retrieved for the required scope ({required_scope.replace('_', ' ')}). "
+            "Dates inferred from titles/URLs and page-update dates do not establish that an old restriction "
+            "remains active. Older alerts are historical/background, not evidence of current airport "
+            "restrictions, limited flights or access controls. Check the airport operator and airline for "
+            "live operational status."
+        )
+    elif not citations_valid:
+        source_refs = ", ".join(
+            f"[{value}]" for value in sorted(current_ids, key=lambda value: int(value[1:]))
+        )
+        replacement = (
+            "**Current official status**\n"
+            f"- Recent official travel-risk source(s) were retrieved for {destination}: {source_refs}. "
+            "However, the summary did not provide a claim-to-source citation that could be validated. "
+            "I cannot confirm a specific disruption from the generated summary; review the cited source "
+            "content and the relevant operator's live status.\n\n"
+        )
+        summary, replaced = re.subn(status_pattern, replacement, summary or "", count=1)
+        if not replaced:
+            summary = replacement + (summary or "")
+
+    valid_source_ids = {f"S{index}" for index in range(1, len(sources) + 1)}
+    summary = re.sub(
+        r"\[S(\d+)\]",
+        lambda match: match.group(0) if f"S{match.group(1)}" in valid_source_ids else "",
+        summary,
+    )
+    return summary, bool(current_ids)
+
+
+
 class TravelRiskMonitor:
     """SQLite-backed wishlist and proactive risk checker.
 
