@@ -5,8 +5,54 @@ without constructing a model or graph.
 """
 from __future__ import annotations
 import json
+import os
 import re
 from typing import Any
+
+try:
+    from global_geography import resolve_iata_location as _resolve_iata_location, global_destination_airport_codes as _global_destination_airport_codes
+except ImportError:
+    _resolve_iata_location = None
+    _global_destination_airport_codes = None
+
+
+def _canonical_location(value: str) -> str:
+    clean = str(value or "").strip()
+    if _resolve_iata_location is not None and clean:
+        try:
+            resolved = _resolve_iata_location(clean)
+            if resolved:
+                codes = sorted({part.strip().upper() for part in resolved.split(",") if part.strip()})
+                return ",".join(codes)
+        except Exception as exc:
+            if exc.__class__.__name__ == "AmbiguousLocationError":
+                return f"AMBIGUOUS_LOCATION:{clean.upper()}"
+            return f"UNRESOLVED_LOCATION:{clean.upper()}"
+    # Preserve valid single or comma-separated IATA code inputs when the
+    # optional offline airport dataset is not installed.
+    parts = [part.strip().upper() for part in clean.split(",") if part.strip()]
+    if parts and all(re.fullmatch(r"[A-Z]{3}", part) for part in parts):
+        return ",".join(sorted(set(parts)))
+    return f"UNRESOLVED_LOCATION:{clean.upper()}" if clean else ""
+
+
+def _max_explore_airports() -> int:
+    try:
+        return max(1, min(int(os.getenv("MAX_EXPLORE_AIRPORTS", "12")), 25))
+    except (TypeError, ValueError):
+        return 12
+
+
+def _default_global_candidates() -> list[str]:
+    limit = _max_explore_airports()
+    if _global_destination_airport_codes is not None:
+        try:
+            values = _global_destination_airport_codes(limit)
+            if values:
+                return [str(value).strip().upper() for value in values]
+        except Exception:
+            pass
+    return ["LHR", "CDG", "FRA", "IST", "DXB", "SIN", "HND", "SYD", "JFK", "LAX", "GRU", "JNB", "NBO", "DOH", "MEX"][:limit]
 
 
 def _normalise_confirmation_text(text: str) -> str:
@@ -112,8 +158,8 @@ def canonical_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
 
     if tool_name == "search_flights_tool":
         return {
-            "dep_id": get_str("dep_id").upper(),
-            "arr_id": get_str("arr_id").upper(),
+            "dep_id": _canonical_location(get_str("dep_id")),
+            "arr_id": _canonical_location(get_str("arr_id")),
             "target_date": get_str("target_date"),
             "trip_type": get_str("trip_type", "2"),
             "return_date": get_str("return_date", "NONE").upper(),
@@ -128,8 +174,8 @@ def canonical_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         dates = raw.get("target_dates", [])
         dates = [str(x).strip() for x in dates] if isinstance(dates, list) else []
         return {
-            "dep_id": get_str("dep_id").upper(),
-            "arr_id": get_str("arr_id").upper(),
+            "dep_id": _canonical_location(get_str("dep_id")),
+            "arr_id": _canonical_location(get_str("arr_id")),
             "target_dates": dates,
             "trip_type": get_str("trip_type", "2"),
             "return_date": get_str("return_date", "NONE").upper(),
@@ -142,11 +188,11 @@ def canonical_tool_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         }
     if tool_name == "explore_destinations_tool":
         airports = raw.get("candidate_airports")
-        if not isinstance(airports, list):
-            airports = ["BLR", "DEL", "BOM", "MAA", "GOI", "DXB", "SIN", "KUL", "BKK"]
+        if not isinstance(airports, list) or not airports:
+            airports = _default_global_candidates()
         return {
-            "dep_id": get_str("dep_id").upper(),
-            "candidate_airports": [str(x).strip().upper() for x in airports],
+            "dep_id": _canonical_location(get_str("dep_id")),
+            "candidate_airports": [_canonical_location(str(x)) for x in airports][:_max_explore_airports()],
             "date_str": get_str("date_str"),
             "budget": round(get_float("budget"), 2),
             "trip_type": get_str("trip_type", "2"),
@@ -192,6 +238,17 @@ def confirmation_decision(
     """Return (allowed, pending_record_to_store, reason)."""
     candidate_calls = [tool_call_record(call) for call in tool_calls]
     candidate = {"calls": candidate_calls}
+    location_error = any(
+        "AMBIGUOUS_LOCATION:" in json.dumps(call.get("args", {}), ensure_ascii=False)
+        or "UNRESOLVED_LOCATION:" in json.dumps(call.get("args", {}), ensure_ascii=False)
+        for call in candidate_calls
+    )
+    if location_error:
+        return (
+            False,
+            None,
+            "A flight location is ambiguous or has no supported IATA airport. Ask the user for the country or a nearby airport before requesting search confirmation.",
+        )
     # An imperative such as 'search' is sufficient only after the assistant
     # has already presented/confirmed a search or explicitly promised to run it.
     # It must never bypass the first confirmation step for a new search.
