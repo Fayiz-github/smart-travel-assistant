@@ -52,7 +52,10 @@ def run_once(owner_id: str | None = None, max_destinations: int = 5) -> int:
         print(f"[{datetime.now(timezone.utc).isoformat()}] No wishlist destinations are due for a fresh check.")
         return 0
 
-    notification_file = os.getenv("RISK_NOTIFICATION_LOG", "risk_notifications.jsonl")
+    notification_path = Path(os.getenv("RISK_NOTIFICATION_LOG", "risk_notifications.jsonl")).expanduser()
+    if not notification_path.is_absolute():
+        notification_path = Path(__file__).resolve().parent / notification_path
+    notification_file = str(notification_path.resolve())
     for result in results:
         label = result.get("city") or result.get("country") or f"destination_id={result.get('destination_id')}"
         level = str(result.get("risk_level") or "unknown").upper()
