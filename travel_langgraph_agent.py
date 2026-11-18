@@ -960,6 +960,20 @@ def _is_greeting(text: str) -> bool:
     return normalized in {"hi", "hello", "hey", "good morning", "good afternoon", "good evening", "how are you"}
 
 
+def _is_trip_details_intake_request(text: str) -> bool:
+    """Detect a request to collect trip details while explicitly deferring searches."""
+    value = " ".join((text or "").lower().split())
+    asks_for_details = bool(re.search(
+        r"\b(?:ask me|collect|gather|get)\b.{0,90}\b(?:missing\s+)?(?:travel|trip)\s+(?:details|information)\b",
+        value,
+    ) or re.search(r"\bmissing\s+(?:travel|trip)\s+details\b", value))
+    defers_search = bool(re.search(
+        r"\b(?:do\s+not|don't|dont)\s+(?:search(?:\s+for)?|look\s+for|find|book)\b.{0,90}\b(?:flights?|hotels?|accommodations?)\b.{0,15}\byet\b",
+        value,
+    ))
+    return asks_for_details and defers_search
+
+
 def _is_basic_trip_start(text: str) -> bool:
     """Detect a broad trip-start request that needs one focused onboarding question."""
     value = " ".join(text.lower().split())
@@ -988,6 +1002,57 @@ def _is_basic_trip_start(text: str) -> bool:
         "recipe", "recipes", "cookie", "cookies", "local dishes",
     )
     return not any(term in value for term in detailed_intent_terms)
+
+
+def _explicit_from_to_places(text: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Resolve explicit `from X to Y` travel planning without treating the
+    origin as a destination or confusing a country suffix with a second stop.
+    """
+    match = re.search(r"\bfrom\s+(.+?)\s+to\s+(.+?)(?:[.!?]|$)", text or "", re.IGNORECASE)
+    if not match:
+        return None, None
+
+    def choose_place(segment: str, prefer_last: bool) -> dict[str, Any] | None:
+        mentions = find_destination_mentions(segment)
+        # Prefer city/airport entities over country-name mentions. A country
+        # record has name == country and no region; this avoids selecting
+        # "India" instead of "Kochi" or "Malaysia" instead of "Kuala Lumpur".
+        specific = [
+            item for item in mentions
+            if not (str(item.get("name") or "") == str(item.get("country") or "") and not item.get("region"))
+        ]
+        candidates = specific or mentions
+        if not candidates:
+            return None
+        return dict(candidates[-1] if prefer_last else candidates[0])
+
+    return choose_place(match.group(1), True), choose_place(match.group(2), False)
+
+
+def _store_explicit_route_context(text: str, context: dict[str, Any]) -> dict[str, Any]:
+    """Persist origin/destination and destination memory for a from-to request."""
+    origin, destination = _explicit_from_to_places(text)
+    if not origin or not destination:
+        return context
+
+    origin_name = str(origin.get("name") or "").strip()
+    destination_name = str(destination.get("name") or "").strip()
+    origin_country = str(origin.get("country") or "").strip()
+    destination_country = str(destination.get("country") or "").strip()
+    context["trip_origin"] = f"{origin_name}, {origin_country}" if origin_country and origin_country != origin_name else origin_name
+    context["trip_destination"] = f"{destination_name}, {destination_country}" if destination_country and destination_country != destination_name else destination_name
+    context["destination_context"] = {
+        "destinations": [destination_name],
+        "active_destination": destination_name,
+        "country": destination_country or None,
+        "region": destination.get("region"),
+        "destination_metadata": [destination],
+    }
+    context["trip_destinations"] = [destination_name]
+    context["active_destination"] = destination_name
+    context["destination"] = destination_name
+    context["trip_planning_mode"] = "general_planning"
+    return context
 
 
 # Travel-domain words are used only as a lightweight first-pass filter.
@@ -1355,6 +1420,14 @@ def _looks_like_follow_up(
         if active_agent == "general_assistant":
             if _selected_service_from_general_prompt(text, active_agent, awaiting):
                 return True
+            if (trip_context or {}).get("pending_kind") == "trip_details_intake":
+                # General trip intake accepts details in any order. Do not force
+                # a date-only answer just because the previous question asked
+                # about dates; party size, class, interests and constraints are
+                # all valid partial updates and never trigger a search.
+                return is_trip_detail_message(text) or _plausible_answer_to_pending_question(
+                    text, active_agent, previous_question
+                )
             if _last_assistant_asked_destination(message_list):
                 return _plausible_answer_to_pending_question(text, active_agent, previous_question)
             return False
@@ -1710,6 +1783,17 @@ def build_travel_supervisor_graph(checkpointer=None):
                 # Secret, safety and policy replies are side responses: retain
                 # an unrelated pending trip question instead of deleting it.
 
+            elif _is_trip_details_intake_request(user_text):
+                # Explicitly defer searches and collect trip details through the
+                # general planner. This must outrank intent overrides because
+                # the sentence necessarily mentions flights/hotels while negating them.
+                next_step = "general_assistant"
+                required_agents = ["general_assistant"]
+                active_agent = "general_assistant"
+                awaiting_user_input = False
+                trip_context["trip_planning_mode"] = "general_planning"
+                trip_context["searches_deferred_for_intake"] = True
+
             # Immigration, visa, passport validity and arrival-card research is
             # a dedicated live-research intent, not a flight/hotel service choice.
             elif _is_entry_requirements_research_request(
@@ -2010,6 +2094,12 @@ def build_travel_supervisor_graph(checkpointer=None):
 
             # 5) Simple conversational messages and trip-start requests.
             elif _is_greeting(user_text) or _is_basic_trip_start(user_text):
+                if _is_basic_trip_start(user_text):
+                    # Store the named destination before asking for missing trip
+                    # details. Explicit from-to routes are kept separately so the
+                    # origin is never mistaken for another destination.
+                    trip_context = update_destination_context(user_text, trip_context)
+                    trip_context = _store_explicit_route_context(user_text, trip_context)
                 next_step = "general_assistant"
                 required_agents = [next_step]
 
