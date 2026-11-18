@@ -1175,6 +1175,25 @@ def _is_explicitly_unrelated(text: str) -> bool:
     return bool(question_or_creation)
 
 
+_ENTRY_REQUIREMENTS_PATTERN = re.compile(
+    r"\b(?:visa\s+(?:and\s+)?(?:entry\s+)?requirements?|entry\s+requirements?|"
+    r"immigration\s+requirements?|passport\s+validity|passport\s+requirements?|"
+    r"digital\s+arrival\s+card|arrival\s+card|\bmdac\b|"
+    r"return[- ]ticket\s+requirements?|onward[- ]ticket\s+requirements?|"
+    r"visa[- ]free|visa\s+exemption|evisa|e-visa|visa\s+on\s+arrival)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_entry_requirements_research_request(text: str, has_destination_context: bool = False) -> bool:
+    """Recognize destination immigration research separately from flight/hotel intent."""
+    value = " ".join((text or "").lower().split())
+    if not value or not _ENTRY_REQUIREMENTS_PATTERN.search(value):
+        return False
+    return bool(has_destination_context or find_destination_mentions(value) or country_mentions(value))
+
+
+
 def _has_travel_intent(text: str) -> bool:
     """Recognize travel questions that belong with the general travel assistant."""
     value = " ".join((text or "").lower().split())
@@ -1690,6 +1709,52 @@ def build_travel_supervisor_graph(checkpointer=None):
                     awaiting_user_input = True
                 # Secret, safety and policy replies are side responses: retain
                 # an unrelated pending trip question instead of deleting it.
+
+            # Immigration, visa, passport validity and arrival-card research is
+            # a dedicated live-research intent, not a flight/hotel service choice.
+            elif _is_entry_requirements_research_request(
+                user_text,
+                has_destination_context=bool(
+                    trip_context.get("destination_context")
+                    or trip_context.get("trip_destination")
+                    or trip_context.get("active_destination")
+                    or trip_context.get("destination")
+                    or trip_context.get("travel_research_destination")
+                ),
+            ):
+                next_step = "travel_research"
+                active_agent = "travel_research"
+                awaiting_user_input = False
+                trip_context["travel_research_mode"] = "entry_requirements"
+                trip_context["travel_research_query"] = user_text[:1200]
+                places = find_destination_mentions(user_text)
+                countries = country_mentions(user_text)
+                if places:
+                    selected = places[-1]
+                    trip_context["travel_research_destination"] = str(selected.get("name") or "")
+                    trip_context["travel_research_country"] = str(selected.get("country") or "")
+                elif len(countries) == 1:
+                    selected_country = next(iter(countries))
+                    trip_context["travel_research_destination"] = selected_country
+                    trip_context["travel_research_country"] = selected_country
+                else:
+                    destination_data = dict(trip_context.get("destination_context") or {})
+                    active_destination = (
+                        destination_data.get("active_destination")
+                        or trip_context.get("active_destination")
+                        or trip_context.get("destination")
+                    )
+                    if active_destination:
+                        trip_context["travel_research_destination"] = str(active_destination)
+                        trip_context["travel_research_country"] = str(destination_data.get("country") or "")
+                passport_country = (trip_context.get("preference_profile") or {}).get("passport_country")
+                if passport_country:
+                    traveler_profile = dict(trip_context.get("traveler_profile") or {})
+                    traveler_profile["passport_country"] = passport_country
+                    trip_context["traveler_profile"] = traveler_profile
+                    trip_context.pop("pending_kind", None)
+                    trip_context.pop("pending_question", None)
+
 
             # A follow-up asking for a message/template after a passport-loss
             # exchange remains in the emergency context rather than being
