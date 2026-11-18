@@ -1274,7 +1274,9 @@ def _is_entry_requirements_research_request(text: str, has_destination_context: 
 
 _TRAVEL_CONDITIONS_PATTERN = re.compile(
     r"\b(?:current|latest|live|today'?s?)\s+(?:travel\s+)?(?:conditions?|status|updates?|disruptions?)\b|"
+    r"\b(?:operating\s+)?status\s+of\b|"
     r"\b(?:is|are)\b.{0,60}\b(?:open|closed|operating|suspended|disrupted|delayed)\b|"
+    r"\b(?:safe|safety)\b.{0,45}\b(?:travel|visit|there|in)\b|"
     r"\b(?:airport|flight|airline|rail|train|metro|bus|road|border|port)\b.{0,50}"
     r"\b(?:status|open|closed|operating|suspended|disrupted|delayed|cancelled|canceled|closure)\b|"
     r"\b(?:closures?|disruptions?|service\s+changes?|operational\s+status|"
@@ -1875,6 +1877,34 @@ def build_travel_supervisor_graph(checkpointer=None):
                 trip_context["trip_planning_mode"] = "general_planning"
                 trip_context["searches_deferred_for_intake"] = True
 
+            elif _is_research_scope_correction(user_text, trip_context):
+                selected = _research_scope_correction_target(user_text)
+                if selected:
+                    destination = str(selected.get("name") or "").strip()
+                    country = str(selected.get("country") or "").strip()
+                    mode = str(trip_context.get("travel_research_mode") or "conditions")
+                    trip_context["travel_research_destination"] = destination
+                    trip_context["travel_research_country"] = country
+                    trip_context["travel_research_query"] = (
+                        f"Entry requirements for {destination}"
+                        if mode == "entry_requirements"
+                        else f"Current travel conditions for {destination}"
+                    )
+                    trip_context["destination_context"] = {
+                        "destinations": [destination],
+                        "active_destination": destination,
+                        "country": country or None,
+                        "region": selected.get("region"),
+                        "destination_metadata": [selected],
+                    }
+                    trip_context["trip_destinations"] = [destination]
+                    trip_context["active_destination"] = destination
+                    trip_context["destination"] = destination
+                    next_step = "travel_research"
+                    required_agents = ["travel_research"]
+                    active_agent = "travel_research"
+                    awaiting_user_input = False
+
             # Immigration, visa, passport validity and arrival-card research is
             # a dedicated live-research intent, not a flight/hotel service choice.
             elif _is_entry_requirements_research_request(
@@ -1888,6 +1918,7 @@ def build_travel_supervisor_graph(checkpointer=None):
                 ),
             ):
                 next_step = "travel_research"
+                required_agents = ["travel_research"]
                 active_agent = "travel_research"
                 awaiting_user_input = False
                 trip_context["travel_research_mode"] = "entry_requirements"
@@ -1919,6 +1950,48 @@ def build_travel_supervisor_graph(checkpointer=None):
                     trip_context["traveler_profile"] = traveler_profile
                     trip_context.pop("pending_kind", None)
                     trip_context.pop("pending_question", None)
+
+            elif _is_travel_conditions_research_request(
+                user_text,
+                has_destination_context=bool(
+                    trip_context.get("destination_context")
+                    or trip_context.get("trip_destination")
+                    or trip_context.get("active_destination")
+                    or trip_context.get("destination")
+                    or trip_context.get("travel_research_destination")
+                ),
+            ):
+                next_step = "travel_research"
+                required_agents = ["travel_research"]
+                active_agent = "travel_research"
+                awaiting_user_input = False
+                trip_context["travel_research_mode"] = "conditions"
+                trip_context["travel_research_query"] = user_text[:1200]
+                places = find_destination_mentions(user_text)
+                countries = country_mentions(user_text)
+                if places:
+                    selected = places[-1]
+                    trip_context["travel_research_destination"] = str(selected.get("name") or "")
+                    trip_context["travel_research_country"] = str(selected.get("country") or "")
+                elif len(countries) == 1:
+                    selected_country = next(iter(countries))
+                    trip_context["travel_research_destination"] = selected_country
+                    trip_context["travel_research_country"] = selected_country
+                else:
+                    destination_data = dict(trip_context.get("destination_context") or {})
+                    active_destination = (
+                        destination_data.get("active_destination")
+                        or trip_context.get("active_destination")
+                        or trip_context.get("destination")
+                        or trip_context.get("travel_research_destination")
+                    )
+                    if active_destination:
+                        trip_context["travel_research_destination"] = str(active_destination)
+                        trip_context["travel_research_country"] = str(
+                            destination_data.get("country")
+                            or trip_context.get("travel_research_country")
+                            or ""
+                        )
 
 
             # A follow-up asking for a message/template after a passport-loss
@@ -2260,10 +2333,10 @@ def build_travel_supervisor_graph(checkpointer=None):
         # New tasks are created only for real LLM specialists. Utility and
         # fixed-response nodes must not create specialist task records.
         for agent_name in required_agents:
-            if agent_name in ("flight_agent", "hotel_agent", "general_assistant") and not _task_for_agent(tasks, agent_name):
+            if agent_name in ("flight_agent", "hotel_agent", "general_assistant", "travel_research") and not _task_for_agent(tasks, agent_name):
                 tasks.append(_new_task(agent_name))
 
-        if next_step in ("flight_agent", "hotel_agent", "general_assistant"):
+        if next_step in ("flight_agent", "hotel_agent", "general_assistant", "travel_research"):
             tasks = _update_task(tasks, next_step, status="running")
         if next_step in ("flight_agent", "hotel_agent"):
             active_agent = next_step
@@ -3428,11 +3501,13 @@ def build_travel_supervisor_graph(checkpointer=None):
     workflow = StateGraph(TravelState)
 
     workflow.add_node("supervisor",        supervisor_node)
+    workflow.add_node("preference_extraction", preference_extraction_node)
     workflow.add_node("flight_agent",      flight_node)
     workflow.add_node("flight_tools",      guarded_flight_tools_node)
     workflow.add_node("hotel_agent",       hotel_node)
     workflow.add_node("hotel_tools",       guarded_hotel_tools_node)
     workflow.add_node("general_assistant", general_assistant_node)
+    workflow.add_node("travel_research", travel_research_node)
     workflow.add_node("time_utility", time_utility_node)
     workflow.add_node("unsupported_query", unsupported_query_node)
     workflow.add_node("service_preference", service_preference_node)
@@ -3467,6 +3542,7 @@ def build_travel_supervisor_graph(checkpointer=None):
             "flight_agent":      "flight_agent",
             "hotel_agent":       "hotel_agent",
             "general_assistant": "general_assistant",
+            "travel_research":  "travel_research",
             "time_utility":      "time_utility",
             "unsupported_query": "unsupported_query",
             "service_preference": "service_preference",
@@ -3514,6 +3590,7 @@ def build_travel_supervisor_graph(checkpointer=None):
         {"supervisor": "supervisor", "end": END},
     )
     workflow.add_edge("time_utility", END)
+    workflow.add_edge("travel_research", END)
     workflow.add_edge("unsupported_query", END)
     workflow.add_edge("service_preference", END)
     workflow.add_edge("clarify_travel", END)
@@ -3615,6 +3692,8 @@ if __name__ == "__main__":
                                         speaker = "🏨 Hotel Specialist:"
                                     elif node_name == "time_utility":
                                         speaker = "🕒 Time Utility:"
+                                    elif node_name == "travel_research":
+                                        speaker = "🌍 Travel Research:"
                                     elif node_name in {"unsupported_query", "service_preference", "clarify_travel"}:
                                         speaker = "🤖 Travel Assistant:"
                                     else:
