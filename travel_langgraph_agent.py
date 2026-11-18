@@ -19,6 +19,11 @@ from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
 from pydantic import BaseModel, Field, StrictInt, field_validator, model_validator
 
+from preference_extractor import (
+    is_trip_detail_message,
+    is_trip_summary_request,
+    update_preference_profile,
+)
 from intent_router import (
     detect_route_override,
     is_destination_food_request,
@@ -1567,6 +1572,38 @@ def build_travel_supervisor_graph(checkpointer=None):
             logger.exception("Contextual intent fallback failed; no specialist route will be guessed.")
             return None
 
+    def preference_extraction_node(state: TravelState) -> dict:
+        """Extract explicit preferences before the supervisor chooses a route."""
+        messages = list(state.get("messages", []))
+        latest = messages[-1] if messages else None
+        if not isinstance(latest, HumanMessage):
+            return {}
+
+        context = dict(state.get("trip_context", {}))
+        user_text = _message_text(latest)
+        profile = update_preference_profile(context.get("preference_profile"), user_text)
+        context["preference_profile"] = profile
+        # Passport nationality is saved only when explicitly tied to a passport.
+        # Never infer it from the trip origin, residence, language or source request.
+        if profile.get("passport_country"):
+            traveler_profile = dict(context.get("traveler_profile") or {})
+            traveler_profile["passport_country"] = profile["passport_country"]
+            context["traveler_profile"] = traveler_profile
+        service_preferences = profile.get("service_search_preferences", {})
+        deferred_services = {
+            service.replace("_search", "")
+            for service, status in service_preferences.items()
+            if status == "deferred"
+        }
+        # Deferrals are turn-persistent preferences until explicitly changed,
+        # but they are never converted into permanent service declines.
+        context["deferred_services"] = sorted(deferred_services)
+        if deferred_services:
+            context["declined_services"] = sorted(
+                set(context.get("declined_services") or []) - deferred_services
+            )
+        return {"trip_context": context}
+
     def supervisor_node(state: TravelState) -> dict:
         messages = list(state.get("messages", []))
         tasks = list(state.get("tasks", []))
@@ -2796,7 +2833,8 @@ def build_travel_supervisor_graph(checkpointer=None):
     workflow.add_node("budget_per_day_warning", budget_per_day_warning_node)
     workflow.add_node("travel_security_checklist", travel_security_checklist_node)
 
-    workflow.add_edge(START, "supervisor")
+    workflow.add_edge(START, "preference_extraction")
+    workflow.add_edge("preference_extraction", "supervisor")
 
     workflow.add_conditional_edges(
         "supervisor",
