@@ -19,6 +19,12 @@ from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.memory import MemorySaver
 from pydantic import BaseModel, Field, StrictInt, field_validator, model_validator
 
+try:
+    from global_geography import resolve_iata_location, default_global_destination_airports
+except ImportError:
+    resolve_iata_location = lambda loc: loc
+    default_global_destination_airports = None
+
 from preference_extractor import (
     is_trip_detail_message,
     is_trip_summary_request,
@@ -213,8 +219,8 @@ def _trim_history(messages: list[BaseMessage]) -> list[BaseMessage]:
 # ===========================================================================
 
 class FlightSearchInput(BaseModel):
-    dep_id: str = Field(..., description="3-letter IATA departure airport code (e.g., CCJ, BLR, BOM, DEL, GOI, COK)")
-    arr_id: str = Field(..., description="3-letter IATA arrival airport code (e.g., DXB, SIN, MAA, BLR, DEL, AGT, KUL)")
+    dep_id: str = Field(..., description="IATA airport code or an unambiguous city/airport name. City names resolve to all airports in that city when supported.")
+    arr_id: str = Field(..., description="IATA airport code or an unambiguous city/airport name. City names resolve to all airports in that city when supported.")
     target_date: str = Field(..., description="Outbound travel date in YYYY-MM-DD format")
     trip_type: Literal["1", "2"] = Field(
         ...,
@@ -253,10 +259,13 @@ class FlightSearchInput(BaseModel):
     @field_validator("dep_id", "arr_id")
     @classmethod
     def validate_iata(cls, v: str) -> str:
-        clean = v.strip().upper()
-        if not flight_agent.is_valid_code(clean):
-            raise ValueError(f"'{v}' is not a recognized 3-letter IATA airport code.")
-        return clean
+        resolved = flight_agent.resolve_iata_location(v)
+        if not resolved or not flight_agent.is_valid_code(resolved):
+            raise ValueError(
+                f"Could not resolve {v!r} to a valid IATA airport/city location. "
+                "Use a city with its country or a specific airport name/code."
+            )
+        return resolved
 
     @field_validator("currency")
     @classmethod
@@ -280,8 +289,10 @@ class FlightSearchInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_flight_logic(self):
-        if self.dep_id == self.arr_id:
-            raise ValueError("Departure and arrival airport codes cannot be identical.")
+        dep_codes = {part.strip().upper() for part in self.dep_id.split(",") if part.strip()}
+        arr_codes = {part.strip().upper() for part in self.arr_id.split(",") if part.strip()}
+        if dep_codes & arr_codes:
+            raise ValueError("Departure and arrival airport selections overlap. Choose distinct locations.")
         if self.adults + self.children > 9:
             raise ValueError("Total passengers (adults + children) cannot exceed 9.")
         
@@ -352,8 +363,8 @@ def search_flights_tool(
 
 
 class FlightDateComparisonInput(BaseModel):
-    dep_id: str = Field(..., description="3-letter IATA departure airport code")
-    arr_id: str = Field(..., description="3-letter IATA arrival airport code")
+    dep_id: str = Field(..., description="IATA airport code or unambiguous city/airport name")
+    arr_id: str = Field(..., description="IATA airport code or unambiguous city/airport name")
     target_dates: list[str] = Field(
         ..., min_length=2, max_length=7,
         description="Two to seven outbound dates in YYYY-MM-DD format. Compare all dates; do not ask the user to choose one first.",
@@ -372,10 +383,13 @@ class FlightDateComparisonInput(BaseModel):
     @field_validator("dep_id", "arr_id")
     @classmethod
     def validate_iata(cls, value: str) -> str:
-        clean = value.strip().upper()
-        if not flight_agent.is_valid_code(clean):
-            raise ValueError(f"'{value}' is not a recognized 3-letter IATA airport code.")
-        return clean
+        resolved = flight_agent.resolve_iata_location(value)
+        if not resolved or not flight_agent.is_valid_code(resolved):
+            raise ValueError(
+                f"Could not resolve {value!r} to a valid IATA airport/city location. "
+                "Use a city with its country or a specific airport name/code."
+            )
+        return resolved
 
     @field_validator("target_dates")
     @classmethod
@@ -405,8 +419,10 @@ class FlightDateComparisonInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_comparison(self):
-        if self.dep_id == self.arr_id:
-            raise ValueError("Departure and arrival airports cannot be identical.")
+        dep_codes = {part.strip().upper() for part in self.dep_id.split(",") if part.strip()}
+        arr_codes = {part.strip().upper() for part in self.arr_id.split(",") if part.strip()}
+        if dep_codes & arr_codes:
+            raise ValueError("Departure and arrival airport selections overlap. Choose distinct locations.")
         if self.adults + self.children > 9:
             raise ValueError("Total passengers cannot exceed 9.")
         if self.trip_type == "1":
@@ -460,11 +476,11 @@ def compare_flight_dates_tool(
 
 
 class ExploreDestinationsInput(BaseModel):
-    dep_id: str = Field(..., description="3-letter IATA departure airport code (e.g., CCJ, BLR, BOM)")
+    dep_id: str = Field(..., description="IATA departure airport code or supported city/airport name")
     candidate_airports: list[str] = Field(
-        default_factory=lambda: ["BLR", "DEL", "BOM", "MAA", "GOI", "DXB", "SIN", "KUL", "BKK"],
-        description="List of 3-letter IATA destination airport codes to compare within budget (max 15)",
-        max_length=15,
+        default_factory=flight_agent.default_global_destination_airports,
+        description="Optional destination IATA codes or city/airport names. If omitted, a geographically diverse global set is explored.",
+        max_length=25,
     )
     date_str: str = Field(..., description="Outbound travel date in YYYY-MM-DD format")
     budget: float = Field(..., gt=0, description="Maximum total flight budget in the chosen currency")
@@ -481,10 +497,30 @@ class ExploreDestinationsInput(BaseModel):
     @field_validator("dep_id")
     @classmethod
     def validate_dep(cls, v: str) -> str:
-        clean = v.strip().upper()
-        if not flight_agent.is_valid_code(clean):
-            raise ValueError(f"'{v}' is not a recognized 3-letter IATA departure airport code.")
-        return clean
+        resolved = flight_agent.resolve_iata_location(v)
+        if not resolved or not flight_agent.is_valid_code(resolved):
+            raise ValueError(
+                f"Could not resolve departure location {v!r}. Specify its country or a valid airport code."
+            )
+        return resolved
+
+    @field_validator("candidate_airports")
+    @classmethod
+    def validate_candidate_airports(cls, values: list[str]) -> list[str]:
+        if not values:
+            values = flight_agent.default_global_destination_airports()
+        resolved_values: list[str] = []
+        for value in values:
+            resolved = flight_agent.resolve_iata_location(value)
+            if not resolved or not flight_agent.is_valid_code(resolved):
+                raise ValueError(
+                    f"Could not resolve destination {value!r}. Use a city with country or an airport code."
+                )
+            if resolved not in resolved_values:
+                resolved_values.append(resolved)
+        if not resolved_values:
+            raise ValueError("Provide at least one valid destination airport or city.")
+        return resolved_values[:flight_agent.MAX_EXPLORE_AIRPORTS]
 
     @field_validator("currency")
     @classmethod
