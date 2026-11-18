@@ -38,6 +38,8 @@ from intent_router import (
 from travel_scope_rules import (
     is_out_of_travel_scope,
     travel_scope_reply,
+    find_destination_mentions,
+    update_destination_context,
 )
 from conversation_rules import (
     is_farewell_request,
@@ -45,6 +47,7 @@ from conversation_rules import (
     is_contextual_detail_followup,
     is_ambiguous_country_pair,
     country_pair_names,
+    country_mentions,
     is_conflict_request,
     is_space_destination_request,
     needs_budget_clarification,
@@ -1256,6 +1259,56 @@ def _is_entry_requirements_research_request(text: str, has_destination_context: 
     if not value or not _ENTRY_REQUIREMENTS_PATTERN.search(value):
         return False
     return bool(has_destination_context or find_destination_mentions(value) or country_mentions(value))
+
+
+_TRAVEL_CONDITIONS_PATTERN = re.compile(
+    r"\b(?:current|latest|live|today'?s?)\s+(?:travel\s+)?(?:conditions?|status|updates?|disruptions?)\b|"
+    r"\b(?:is|are)\b.{0,60}\b(?:open|closed|operating|suspended|disrupted|delayed)\b|"
+    r"\b(?:airport|flight|airline|rail|train|metro|bus|road|border|port)\b.{0,50}"
+    r"\b(?:status|open|closed|operating|suspended|disrupted|delayed|cancelled|canceled|closure)\b|"
+    r"\b(?:closures?|disruptions?|service\s+changes?|operational\s+status|"
+    r"airport\s+status|transport\s+status|travel\s+advisory|safety\s+alerts?)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_travel_conditions_research_request(
+    text: str, has_destination_context: bool = False
+) -> bool:
+    """Recognize live destination conditions that require current-source research."""
+    value = " ".join((text or "").lower().split())
+    if not value or not _TRAVEL_CONDITIONS_PATTERN.search(value):
+        return False
+    return bool(has_destination_context or find_destination_mentions(value) or country_mentions(value))
+
+
+def _research_scope_correction_target(text: str) -> dict[str, Any] | None:
+    """Resolve the destination explicitly supplied as a correction."""
+    value = " ".join((text or "").split())
+    correction_patterns = (
+        r"\b(?:actually|i\s+mean|i\s+meant|correction)\s+(?P<target>.+?)(?:\s*,?\s+not\b.*)?$",
+        r"\bnot\b.+?\bbut\b\s+(?P<target>.+)$",
+    )
+    for pattern in correction_patterns:
+        match = re.search(pattern, value, re.IGNORECASE)
+        if not match:
+            continue
+        target = match.group("target").strip(" .,!?")
+        places = find_destination_mentions(target)
+        if places:
+            return dict(places[-1])
+        countries = country_mentions(target)
+        if len(countries) == 1:
+            country = next(iter(countries))
+            return {"name": country, "country": country, "region": None}
+    return None
+
+
+def _is_research_scope_correction(text: str, trip_context: dict[str, Any]) -> bool:
+    """Detect an explicit destination correction to a prior live-research request."""
+    if trip_context.get("travel_research_mode") not in {"conditions", "entry_requirements"}:
+        return False
+    return _research_scope_correction_target(text) is not None
 
 
 
