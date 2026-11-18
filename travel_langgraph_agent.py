@@ -899,7 +899,11 @@ def get_default_checkpointer():
                 "CHECKPOINTER_TYPE=sqlite was selected but langgraph-checkpoint-sqlite is not installed. "
                 "Install it with: pip install langgraph-checkpoint-sqlite"
             ) from exc
-        db_path = os.getenv("CHECKPOINT_DB_PATH", "travel_checkpoints.db")
+        configured_path = Path(os.getenv("CHECKPOINT_DB_PATH", "travel_checkpoints.db")).expanduser()
+        if not configured_path.is_absolute():
+            configured_path = Path(__file__).resolve().parent / configured_path
+        db_path = str(configured_path.resolve())
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(db_path, check_same_thread=False)
         saver = SqliteSaver(connection)
         saver.setup()
