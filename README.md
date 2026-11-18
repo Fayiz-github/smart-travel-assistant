@@ -35,7 +35,7 @@ An AI-powered travel assistant for searching flights and hotels using Google Fli
 
 ### 🛡️ Built-in Input Validation & Safety
 - **Airport Resolution**: Uses a global airport directory for IATA validation and exact city/airport-name resolution. Multi-airport cities are sent as comma-separated airport codes where supported; ambiguous same-name cities require country clarification.
-- **Deterministic Preference Profiling**: Extracts budget, currency, cabin class, traveler count, and passport nationality strictly from explicit user statements; never guesses or infers sensitive personal data.
+- **Deterministic Preference Profiling**: `preference_extractor.py` retains explicitly stated budget, currency, cabin class, accommodation style, traveler count, passport country, and service-search preferences; it never guesses passport nationality.
 - **Date Guardrails**: Validates `YYYY-MM-DD` calendar dates, prevents past dates, ensures return date > departure date, and respects the 330-day airline/hotel booking window (`MAX_ADVANCE_DAYS`).
 - **Hotel Stays**: Validates check-out > check-in and caps bookings to reasonable stay durations (1 to 30 nights).
 - **Guest & Budget Constraints**: Enforces positive guest counts (1–20 adults) and positive finite numbers for budgets.
@@ -167,8 +167,17 @@ All parameters can be customized via `.env` or overridden as constants:
 | `MAX_COMFORT_LAYOVER_MINS` | `360` | Layover duration after which a long layover warning is shown |
 | `FLIGHT_CHEAP_MULTIPLIER` | `1.20` | Multiplier above lowest fare for flight Cheap tier |
 | `FLIGHT_BUDGET_MULTIPLIER` | `1.40` | Multiplier above lowest fare for flight Budget tier |
-| `MAX_EXPLORE_AIRPORTS` | `10` | Maximum destination airports queried in explore mode |
+| `MAX_EXPLORE_AIRPORTS` | `12` | Maximum destination airports queried in explore mode |
 | `EXPLORE_AIRPORTS` | `""` | Comma-separated fallback airport codes for explore mode |
+| `OPENAI_MODEL` | `gpt-5-nano` | LangGraph model; set `OPENAI_API_KEY` to enable the supervisor |
+| `TAVILY_API_KEY` | *(None)* | Enables source-based current-condition and entry-requirement research |
+| `SERPAPI_MAX_CALLS_PER_MINUTE` | `20` | Maximum calls in a rolling 60-second window |
+| `SERPAPI_MAX_CALLS_PER_DAY` | `100` | Daily SerpApi request quota |
+| `SERPAPI_MAX_CALLS_PER_MONTH` | `200` | Monthly SerpApi request quota; set this to match your plan |
+| `SERPAPI_LIMIT_DB_PATH` | `search_limits.db` | SQLite persistence for usage counters and rolling-window events |
+| `TRAVEL_RESEARCH_MAX_RESULTS` | `5` | Tavily results returned per research query |
+| `TRAVEL_RISK_MAX_SOURCES` | `5` | Maximum sources included in a travel-research assessment |
+| `TRAVEL_RISK_DB_PATH` | `travel_risk.db` | SQLite database used by the optional risk monitor/scheduler |
 | `MIN_SAFE_RATING` | `3.5` | Minimum acceptable hotel guest rating |
 | `HIGH_RATING_THRESHOLD` | `4.3` | Rating threshold to highlight top-rated hotels |
 | `HOTEL_CHEAP_MEDIAN_FACTOR` | `0.75` | Median multiplier for hotel Cheap tier |
@@ -183,7 +192,7 @@ All parameters can be customized via `.env` or overridden as constants:
 ---
 
 ### 🛡️ Process-Wide Rate Limiting & Provider Safety (`search_limits.py`)
-- **Sliding-Window Rate Limiter**: Thread-safe `ProviderRateLimiter` managing calls per minute (`SERPAPI_MAX_CALLS_PER_MINUTE`) and daily call quotas (`SERPAPI_MAX_CALLS_PER_DAY`).
+- **Persistent Quotas**: Thread-safe, SQLite-backed `ProviderRateLimiter` enforces a rolling 60-second window plus daily and monthly quotas (`SERPAPI_MAX_CALLS_PER_MINUTE`, `SERPAPI_MAX_CALLS_PER_DAY`, `SERPAPI_MAX_CALLS_PER_MONTH`).
 - **Quota Protection**: Throws `SearchBudgetExceeded` when rate thresholds are approached to avoid unexpected subscription billing.
 - **Flight Agent Resilience**: Integrated with 350+ valid commercial airport IATA codes (`VALID_IATA_CODES`) and an in-memory `BoundedTTLCache` (500 items, 900s TTL).
 
@@ -220,8 +229,11 @@ All parameters can be customized via `.env` or overridden as constants:
 ---
 
 ### 🤖 Enterprise LangGraph Multi-Agent Supervisor (`travel_langgraph_agent.py`)
-- **LangGraph StateGraph Engine**: Coordinates Master Supervisor, Flight Specialist, Hotel Specialist, and General Assistant nodes.
+- **LangGraph StateGraph Engine**: Coordinates the Master Supervisor, preference extraction, Flight and Hotel Specialists, General Assistant, and source-based Travel Research nodes.
 - **Dynamic Calendar Grounding**: Local timezone calendar context (`Asia/Kolkata`) with a 14-day upcoming reference table to eliminate relative date hallucinations (*"coming friday"*, *"next week"*).
+- **Current Travel Research**: Routes destination operating-condition and entry-requirement questions through Tavily. Destination-relevant results are filtered, publication and page-update dates are kept distinct, and current-status citations are checked against recent official evidence. Missing passport nationality is never inferred.
+- **Research Scope Corrections**: A user can correct a destination after a research turn; the next lookup uses the corrected destination rather than silently retaining the prior one.
+- **Guided Trip Preferences**: Explicitly stated preferences persist in the graph's trip context and can inform later search requests without converting an unstated preference into a fact.
 - **Mandatory Clarification Checklists**:
   - Flight checklist: Mandates explicit confirmation of departure, destination, date, and **trip type (one-way vs round-trip + return date)** before search execution.
   - Hotel checklist: Confirms destination, check-in, check-out, and guest counts before invoking tools.
