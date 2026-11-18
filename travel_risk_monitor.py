@@ -362,6 +362,8 @@ _TRAVEL_IMPACT_TERMS = (
     "cancel", "cancelled", "canceled", "cancellation", "evacuation",
     "evacuate", "evacuated", "border", "visa", "weather", "storm", "flood",
     "earthquake", "wildfire", "health alert", "outbreak", "emergency",
+    "passport", "immigration", "evisa", "e-visa", "arrival card",
+    "entry requirements", "onward ticket", "passport validity",
 )
 _LOCAL_AUTHORITY_TERMS = (
     "city government", "municipal", "municipality", "city council", "local council",
@@ -447,6 +449,7 @@ def destination_source_relevance(
         if tier == "official_domain" and source_kind in {
             "destination official sources", "current airport and transport operations",
             "traveler government advisory", "official country context",
+            "entry requirements official sources",
         }:
             return True, "country_wide_context", "official country advisory; destination-wide context"
         if tier in {"official_domain", "established_news"}:
@@ -457,6 +460,7 @@ def destination_source_relevance(
     if city and country_match and travel_signal and tier == "official_domain" and source_kind in {
         "traveler government advisory", "destination official sources",
         "current airport and transport operations", "official country context",
+        "entry requirements official sources",
     }:
         return True, "country_wide_context", "official country advisory; not city-specific"
 
